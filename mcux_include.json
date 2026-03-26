@@ -1,0 +1,33 @@
+{
+  "version": 7,
+  "cmakeMinimumRequired": {
+    "major": 3
+  },
+  "configurePresets": [
+    {
+      "name": "debug-env",
+      "displayName": "debug-env",
+      "hidden": true,
+      "environment": {
+        "ARMGCC_DIR": "C:/NXP/MCUXpressoIDE_25.6.136/ide/tools",
+        "SdkRootDirPath": "c:/Users/perbo/source/repos/AudioStreamDemoApp/sdks/frdm_mcxn947_blank_sdk",
+        "MCUX_VENV_PATH": "C:/Users/perbo/.mcuxpressotools/.venv_3_10/Scripts",
+        "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}"
+      },
+      "cacheVariables": {}
+    },
+    {
+      "name": "release-env",
+      "displayName": "release-env",
+      "hidden": true,
+      "environment": {
+        "ARMGCC_DIR": "C:/NXP/MCUXpressoIDE_25.6.136/ide/tools",
+        "SdkRootDirPath": "c:/Users/perbo/source/repos/AudioStreamDemoApp/sdks/frdm_mcxn947_blank_sdk",
+        "MCUX_VENV_PATH": "C:/Users/perbo/.mcuxpressotools/.venv_3_10/Scripts",
+        "PATH": "$env{MCUX_VENV_PATH}${pathListSep}$penv{PATH}"
+      },
+      "cacheVariables": {}
+    }
+  ],
+  "buildPresets": []
+}

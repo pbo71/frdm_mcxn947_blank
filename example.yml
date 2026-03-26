@@ -1,0 +1,17 @@
+audio_stream_demo_app:
+  boards:
+    frdmmcxn947@cm33_core0: []
+  contents:
+    document:
+      brief: Custom application for board bring up and further development. The
+        project initializes the USB vendor bulk interface and starts a FreeRTOS-
+        based alive service that blinks the red LED.
+      category: demo_apps
+      example_readme:
+      - examples/demo_apps/led_blinky_peripheral/readme.md
+      - ${board_root}/${board}/demo_apps/led_blinky/example_board_readme.md
+      - ${board_root}/${board}/examples_shared_readme.md
+      name: audio_stream_demo_app${core_id_suffix_name}
+    meta_path: examples/demo_apps/audio_stream_demo_app
+    project-root-path: boards/${board}/demo_apps/audio_stream_demo_app/${multicore_foldername}
+  section-type: freestanding_application
