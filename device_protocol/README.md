@@ -94,6 +94,8 @@ Commands:
 - `5` `StartStream`
 - `6` `StopStream`
 - `7` `SetGeneratorConfig`
+- `8` `I2cWriteRegister`
+- `9` `I2cReadRegister`
 
 StartStream sources:
 
@@ -125,6 +127,17 @@ Response payloads:
 | `StartStream` | `StartStream` | `StartStreamResponsePayload { u32 sampleRateHz, u8 channelCount, u8 bitsPerSample, u8 source, u8 reserved }` |
 | `StopStream` | `StopStream` | `StopStreamResponsePayload { u32 stopReason }` |
 | `SetGeneratorConfig` | `SetGeneratorConfig` | `SetGeneratorConfigResponsePayload { u32 primaryFrequencyHz, u32 secondaryFrequencyHz, u32 modulationPeriodMs, u16 amplitude, u8 source, u8 noiseType, u8 amplitudeEnvelope, u8 reserved, u32 noiseSeed }` |
+| `I2cWriteRegister` | `I2cWriteRegister` | `I2cTransferStatusPayload { u32 driverStatus }` |
+| `I2cReadRegister` | `I2cReadRegister` | `I2cReadRegisterResponseHeader { u32 driverStatus, u8 readLength, u8 reserved0, u16 reserved1 }` followed by `readLength` data bytes |
+
+Codec register access:
+
+- `I2cWriteRegister` command payload begins with `I2cWriteRegisterCommandHeader { u8 deviceAddress, u8 registerAddressSize, u8 writeLength, u8 reserved, u32 registerAddress }` followed by `writeLength` data bytes.
+- `I2cReadRegister` command payload is `I2cReadRegisterCommandPayload { u8 deviceAddress, u8 registerAddressSize, u8 readLength, u8 reserved, u32 registerAddress }`.
+- `deviceAddress` is a 7-bit I2C slave address. For SGTL5000 use `0x0A`.
+- `registerAddressSize` is the number of register-address bytes placed on the bus before the read or write data. SGTL5000 uses `2`.
+- `writeLength` and `readLength` must be in the range `1..32` so frames fit inside the control-plane packet budget even on full-speed USB.
+- The commands use the existing codec I2C bus selected by `BOARD_Codec_I2C_*`.
 
 Stream control:
 

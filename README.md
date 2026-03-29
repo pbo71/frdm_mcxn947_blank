@@ -82,4 +82,5 @@ If you want to be more selective, stage only the project code and config files f
 ## Notes
 
 - `SetGeneratorConfig` in the current protocol includes `noiseSeed` and uses a 22-byte payload.
+- The control protocol now includes `I2cWriteRegister` and `I2cReadRegister` on the codec I2C bus; SGTL5000 uses 7-bit address `0x0A` with 2-byte register addresses.
 - The host reference tool is useful for validating control-plane and generated-audio behavior over WinUSB.

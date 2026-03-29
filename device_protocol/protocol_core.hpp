@@ -20,7 +20,8 @@ constexpr uint32_t kProtocolCapabilities = kCapabilityCommandResponse |
                                            kCapabilityAudioBulkPipe |
                                            kCapabilityAudioStreamControl |
                                            kCapabilityGeneratedAudioSource |
-                                           kCapabilityGeneratorConfig;
+                                           kCapabilityGeneratorConfig |
+                                           kCapabilityI2cRegisterAccess;
 
 struct ProtocolState
 {

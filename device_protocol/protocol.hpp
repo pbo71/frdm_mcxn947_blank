@@ -41,6 +41,8 @@ enum class CommandId : uint8_t
     StartStream = 5U,
     StopStream = 6U,
     SetGeneratorConfig = 7U,
+    I2cWriteRegister = 8U,
+    I2cReadRegister = 9U,
 };
 
 enum class EventId : uint8_t
@@ -98,6 +100,9 @@ constexpr uint32_t kCapabilityAudioBulkPipe = (1UL << 4U);
 constexpr uint32_t kCapabilityAudioStreamControl = (1UL << 5U);
 constexpr uint32_t kCapabilityGeneratedAudioSource = (1UL << 6U);
 constexpr uint32_t kCapabilityGeneratorConfig = (1UL << 7U);
+constexpr uint32_t kCapabilityI2cRegisterAccess = (1UL << 8U);
+
+constexpr uint8_t kMaxI2cRegisterTransferBytes = 32U;
 
 struct DEVICE_PROTOCOL_PACKED FrameHeader
 {
@@ -173,6 +178,37 @@ struct DEVICE_PROTOCOL_PACKED SetGeneratorConfigResponsePayload
     uint8_t amplitudeEnvelope;
     uint8_t reserved;
     uint32_t noiseSeed;
+};
+
+struct DEVICE_PROTOCOL_PACKED I2cWriteRegisterCommandHeader
+{
+    uint8_t deviceAddress;
+    uint8_t registerAddressSize;
+    uint8_t writeLength;
+    uint8_t reserved;
+    uint32_t registerAddress;
+};
+
+struct DEVICE_PROTOCOL_PACKED I2cReadRegisterCommandPayload
+{
+    uint8_t deviceAddress;
+    uint8_t registerAddressSize;
+    uint8_t readLength;
+    uint8_t reserved;
+    uint32_t registerAddress;
+};
+
+struct DEVICE_PROTOCOL_PACKED I2cTransferStatusPayload
+{
+    uint32_t driverStatus;
+};
+
+struct DEVICE_PROTOCOL_PACKED I2cReadRegisterResponseHeader
+{
+    uint32_t driverStatus;
+    uint8_t readLength;
+    uint8_t reserved0;
+    uint16_t reserved1;
 };
 
 struct DEVICE_PROTOCOL_PACKED StopStreamResponsePayload

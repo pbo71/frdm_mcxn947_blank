@@ -63,6 +63,15 @@ mcux_add_include(
 mcux_add_include(
     INCLUDES services
 )
+
+target_sources(${MCUX_SDK_PROJECT_NAME} PRIVATE
+    ${SdkRootDirPath}/drivers/lpflexcomm/lpi2c/fsl_lpi2c.c
+)
+
+target_include_directories(${MCUX_SDK_PROJECT_NAME} PRIVATE
+    ${SdkRootDirPath}/drivers/lpflexcomm/lpi2c
+)
+
 mcux_convert_binary(BINARY ${APPLICATION_BINARY_DIR}/${MCUX_SDK_PROJECT_NAME}.bin)
 
 mcux_add_include(INCLUDES .)

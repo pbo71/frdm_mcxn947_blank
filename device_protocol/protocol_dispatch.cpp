@@ -75,6 +75,8 @@ uint32_t ParseAndDispatchCommand(const ProtocolState &state,
         case CommandId::StartStream:
         case CommandId::StopStream:
         case CommandId::SetGeneratorConfig:
+        case CommandId::I2cWriteRegister:
+        case CommandId::I2cReadRegister:
             return DispatchSystemCommand(state,
                                          commandId,
                                          payload,
