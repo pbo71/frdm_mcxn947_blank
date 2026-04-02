@@ -81,7 +81,7 @@ If you want to be more selective, stage only the project code and config files f
 
 ## Notes
 
-- Audio streaming now uses 24-bit PCM carried in a 32-bit little-endian container across both loopback and generated sources.
+- Audio streaming now uses 24-bit PCM in 32-bit little-endian slots across both loopback and generated sources, with samples MSB-justified inside each 32-bit word.
 - `SetGeneratorConfig` in the current protocol includes `noiseSeed` and uses a 22-byte payload.
 - The control protocol now includes `I2cWriteRegister` and `I2cReadRegister` on the codec I2C bus; SGTL5000 uses 7-bit address `0x0A` with 2-byte register addresses.
 - The host reference tool is useful for validating control-plane and generated-audio behavior over WinUSB.

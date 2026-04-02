@@ -254,6 +254,12 @@ struct DEVICE_PROTOCOL_PACKED GetUsbDebugStateResponsePayload
     uint32_t setupWValue;
     uint32_t setupWIndex;
     uint32_t setupWLength;
+    uint32_t playbackFillLevelBytes;
+    uint32_t playbackMinFillLevelBytes;
+    uint32_t playbackMaxFillLevelBytes;
+    uint32_t playbackUnderrunCount;
+    uint32_t playbackOverrunCount;
+    uint32_t playbackDroppedBytes;
 };
 
 static_assert(sizeof(GetInfoResponsePayload) == 8U, "GetInfo response payload must remain 8 bytes.");
@@ -268,7 +274,7 @@ static_assert(sizeof(DeviceReadyEventPayload) == 8U, "DeviceReady event payload 
 static_assert(sizeof(StreamStartedEventPayload) == 8U, "StreamStarted event payload must remain 8 bytes.");
 static_assert(sizeof(StreamStoppedEventPayload) == 4U, "StreamStopped event payload must remain 4 bytes.");
 static_assert(sizeof(FaultEventPayload) == 8U, "Fault event payload must remain 8 bytes.");
-static_assert(sizeof(GetUsbDebugStateResponsePayload) == 40U, "GetUsbDebugState response payload must remain 40 bytes.");
+static_assert(sizeof(GetUsbDebugStateResponsePayload) == 64U, "GetUsbDebugState response payload must remain 64 bytes.");
 
 }  // namespace device_protocol
 

@@ -23,6 +23,8 @@ mcux_add_source(
             audio_tx_service.cpp
             audio_tx_service.h
             freertos_diagnostics.cpp
+            services/audio_playback_buffer.cpp
+            services/audio_playback_buffer.h
             services/audio_stream_service.cpp
             services/audio_stream_service.h
             services/control_plane_service.cpp

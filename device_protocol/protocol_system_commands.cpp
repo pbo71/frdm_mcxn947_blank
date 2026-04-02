@@ -6,6 +6,7 @@ extern "C" {
 #include "frdmmcxn947_cm33_core0/frdmmcxn947/board.h"
 #include "fsl_lpflexcomm.h"
 #include "device_protocol/protocol_c_api.h"
+#include "services/audio_playback_buffer.h"
 #include "services/audio_stream_service.h"
 #include "usb_vendor_bulk.h"
 }
@@ -92,6 +93,12 @@ uint32_t HandleGetUsbDebugState(uint16_t sequence, uint8_t *responseBuffer, uint
     payload.setupWValue = g_UsbVendorBulkDebug.setupWValue;
     payload.setupWIndex = g_UsbVendorBulkDebug.setupWIndex;
     payload.setupWLength = g_UsbVendorBulkDebug.setupWLength;
+    payload.playbackFillLevelBytes = AudioPlaybackBuffer_FillLevelBytes();
+    payload.playbackMinFillLevelBytes = AudioPlaybackBuffer_GetMinFillLevelBytes();
+    payload.playbackMaxFillLevelBytes = AudioPlaybackBuffer_GetMaxFillLevelBytes();
+    payload.playbackUnderrunCount = AudioPlaybackBuffer_GetUnderrunCount();
+    payload.playbackOverrunCount = AudioPlaybackBuffer_GetOverrunCount();
+    payload.playbackDroppedBytes = AudioPlaybackBuffer_GetDroppedBytes();
 
     return BuildFrame(FrameType::Response,
                       static_cast<uint8_t>(CommandId::GetUsbDebugState),

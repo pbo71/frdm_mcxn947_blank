@@ -5,6 +5,7 @@
 #include <string.h>
 
 extern "C" {
+#include "services/audio_playback_buffer.h"
 #include "services/control_plane_service.h"
 }
 
@@ -330,6 +331,11 @@ int32_t AudioStreamService_ClampGeneratedSample24(int32_t sampleValue)
     return sampleValue;
 }
 
+int32_t AudioStreamService_PackSample24ToMsbAligned32(int32_t sampleValue)
+{
+    return AudioStreamService_ClampGeneratedSample24(sampleValue) << 8U;
+}
+
 int32_t AudioStreamService_GetScaledAmplitude24(void)
 {
     return static_cast<int32_t>((static_cast<int64_t>(g_audioStreamServiceState.generatedAmplitude) *
@@ -437,6 +443,7 @@ int32_t AudioStreamService_GenerateSample(void)
 
 extern "C" void AudioStreamService_Init(void)
 {
+    AudioPlaybackBuffer_Reset();
     g_audioStreamServiceState.configured = false;
     g_audioStreamServiceState.streaming = false;
     g_audioStreamServiceState.maxAudioPacketSize = 0U;
@@ -459,6 +466,7 @@ extern "C" void AudioStreamService_Init(void)
 
 extern "C" void AudioStreamService_OnTransportReset(void)
 {
+    AudioPlaybackBuffer_Reset();
     if (g_audioStreamServiceState.streaming)
     {
         ControlPlaneService_NotifyStreamStopped(AUDIO_STREAM_SERVICE_STOP_REASON_TRANSPORT_RESET);
@@ -486,6 +494,7 @@ extern "C" void AudioStreamService_OnTransportReset(void)
 
 extern "C" void AudioStreamService_OnTransportReady(uint16_t maxAudioPacketSize)
 {
+    AudioPlaybackBuffer_Reset();
     g_audioStreamServiceState.configured = true;
     g_audioStreamServiceState.streaming = false;
     g_audioStreamServiceState.maxAudioPacketSize = maxAudioPacketSize;
@@ -510,6 +519,11 @@ extern "C" bool AudioStreamService_Start(uint32_t sampleRateHz,
     }
 
     if (!AudioStreamService_IsFormatValid(sampleRateHz, channelCount, bitsPerSample, source))
+    {
+        return false;
+    }
+
+    if (!AudioPlaybackBuffer_Configure(sampleRateHz, channelCount, bitsPerSample))
     {
         return false;
     }
@@ -544,6 +558,7 @@ extern "C" bool AudioStreamService_Stop(uint32_t stopReason)
         return false;
     }
 
+    AudioPlaybackBuffer_Reset();
     g_audioStreamServiceState.streaming = false;
     g_audioStreamServiceState.nextExpectedSequenceNumber = 0U;
     g_audioStreamServiceState.source = AUDIO_STREAM_SERVICE_SOURCE_HOST_RX_LOOPBACK;
@@ -657,6 +672,8 @@ extern "C" bool AudioStreamService_HandleRxPacket(const uint8_t *rxBuffer,
 
     g_audioStreamServiceState.nextExpectedSequenceNumber = header.sequenceNumber + 1U;
 
+    (void)AudioPlaybackBuffer_Write(rxBuffer + sizeof(header), header.payloadBytes);
+
     memcpy(txBuffer, &txHeader, sizeof(txHeader));
     memcpy(txBuffer + sizeof(txHeader), rxBuffer + sizeof(txHeader), header.payloadBytes);
     *txLength = rxLength;
@@ -733,7 +750,8 @@ extern "C" bool AudioStreamService_TryBuildGeneratedPacket(uint8_t *txBuffer,
             }
             else
             {
-                memcpy(payloadBuffer + sampleOffset, &sampleValue, sizeof(sampleValue));
+                const int32_t sample32 = AudioStreamService_PackSample24ToMsbAligned32(sampleValue);
+                memcpy(payloadBuffer + sampleOffset, &sample32, sizeof(sample32));
             }
         }
 

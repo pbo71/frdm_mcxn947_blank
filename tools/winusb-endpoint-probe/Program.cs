@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
+using System.Threading;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
@@ -11,6 +12,7 @@ internal static class Program
 {
     private const string DefaultRunMode = "full";
     private const string GeneratedSmokeRunMode = "generated-smoke";
+    private const string LoopbackStressRunMode = "loopback-stress";
     private const uint DigcfPresent = 0x00000002;
     private const uint DigcfDeviceInterface = 0x00000010;
     private const uint GenericRead = 0x80000000;
@@ -56,6 +58,12 @@ internal static class Program
     private const byte GeneratedChannelCount = 2;
     private const byte GeneratedContainerBitsPerSample = 32;
     private const int GeneratedValidBitsPerSample = 24;
+    private const int LoopbackStressBurstCount = 18;
+    private const int LoopbackStressPacketsPerBurst = 8;
+    private const int LoopbackStressFramesPerPacket = 32;
+    private const int LoopbackStressShortPauseMs = 2;
+    private const int LoopbackStressLongPauseMs = 12;
+    private const int LoopbackStressDebugSnapshotPeriod = 6;
 
     private static readonly Guid DefaultInterfaceGuid = new("D5959801-45C1-49DB-9053-89B5365C2800");
 
@@ -151,7 +159,8 @@ internal static class Program
         }
 
         if (!string.Equals(runMode, DefaultRunMode, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(runMode, GeneratedSmokeRunMode, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(runMode, GeneratedSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, LoopbackStressRunMode, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"Unsupported run mode: {runMode}");
         }
@@ -393,6 +402,12 @@ internal static class Program
             return;
         }
 
+        if (string.Equals(runMode, LoopbackStressRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunLoopbackStressDemo(winUsbHandle, endpoints, maxPacket);
+            return;
+        }
+
         if (endpoints.ContainsKey(AudioOutPipe) && endpoints.ContainsKey(AudioInPipe))
         {
             var startStreamResponse = ExecuteCommand(winUsbHandle,
@@ -408,15 +423,17 @@ internal static class Program
 
             var audioMaxPacket = endpoints[(byte)AudioInPipe].MaximumPacketSize;
             RunAudioLoopbackDemo(winUsbHandle, audioMaxPacket);
+            PrintDebugStateSnapshot(winUsbHandle, maxPacket, 6, "Debug state during host loopback");
 
-            var stopStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 6, 0x06, Array.Empty<byte>());
+            var stopStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 7, 0x06, Array.Empty<byte>());
             ValidateResponseStatus(stopStreamResponse, expectedStatus: 0, "StopStream");
             Console.WriteLine($"StopStream response: {DescribeFrame(stopStreamResponse)}");
             DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Post-stop");
+            PrintDebugStateSnapshot(winUsbHandle, maxPacket, 8, "Debug state after stop");
 
             var restartStreamResponse = ExecuteCommand(winUsbHandle,
                                                        maxPacket,
-                                                       7,
+                                                       9,
                                                        0x05,
                                                        BuildStartStreamPayload(LoopbackSampleRateHz,
                                                                                LoopbackChannelCount,
@@ -428,13 +445,13 @@ internal static class Program
             RunEndOfStreamLoopbackDemo(winUsbHandle, audioMaxPacket);
             DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Post-EOS");
 
-            var stopAfterEosResponse = ExecuteCommand(winUsbHandle, maxPacket, 8, 0x06, Array.Empty<byte>());
+            var stopAfterEosResponse = ExecuteCommand(winUsbHandle, maxPacket, 10, 0x06, Array.Empty<byte>());
             ValidateResponseStatus(stopAfterEosResponse, expectedStatus: 6, "StopStream after EOS");
             Console.WriteLine($"StopStream after EOS response: {DescribeFrame(stopAfterEosResponse)}");
 
             var mismatchStartStreamResponse = ExecuteCommand(winUsbHandle,
                                                              maxPacket,
-                                                             9,
+                                                             11,
                                                              0x05,
                                                              BuildStartStreamPayload(LoopbackSampleRateHz,
                                                                                      LoopbackChannelCount,
@@ -445,14 +462,14 @@ internal static class Program
 
             RunFormatMismatchDropDemo(winUsbHandle, audioMaxPacket);
 
-            var stopAfterMismatchResponse = ExecuteCommand(winUsbHandle, maxPacket, 10, 0x06, Array.Empty<byte>());
+            var stopAfterMismatchResponse = ExecuteCommand(winUsbHandle, maxPacket, 12, 0x06, Array.Empty<byte>());
             ValidateResponseStatus(stopAfterMismatchResponse, expectedStatus: 0, "StopStream after format mismatch");
             Console.WriteLine($"StopStream after mismatch response: {DescribeFrame(stopAfterMismatchResponse)}");
             DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Post-mismatch stop");
 
             var setSineConfigResponse = ExecuteCommand(winUsbHandle,
                                                        maxPacket,
-                                                       11,
+                                                       13,
                                                        0x07,
                                                        BuildSetGeneratorConfigPayload(1200U,
                                                                                       1200U,
@@ -467,7 +484,7 @@ internal static class Program
 
             var generatedSineStartStreamResponse = ExecuteCommand(winUsbHandle,
                                                                   maxPacket,
-                                                                  12,
+                                                                  14,
                                                                   0x05,
                                                                   BuildStartStreamPayload(GeneratedSampleRateHz,
                                                                                           GeneratedChannelCount,
@@ -478,7 +495,7 @@ internal static class Program
 
             RunGeneratedAudioDemo(winUsbHandle, audioMaxPacket, AudioSourceDeviceGeneratedSine, "Generated sine");
 
-            var stopAfterGeneratedSineResponse = ExecuteCommand(winUsbHandle, maxPacket, 13, 0x06, Array.Empty<byte>());
+            var stopAfterGeneratedSineResponse = ExecuteCommand(winUsbHandle, maxPacket, 15, 0x06, Array.Empty<byte>());
             ValidateResponseStatus(stopAfterGeneratedSineResponse, expectedStatus: 0, "StopStream after generated sine");
             Console.WriteLine($"StopStream after generated sine response: {DescribeFrame(stopAfterGeneratedSineResponse)}");
             DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Post-generated sine stop");
@@ -486,7 +503,7 @@ internal static class Program
 
             var setChirpConfigResponse = ExecuteCommand(winUsbHandle,
                                                         maxPacket,
-                                                        14,
+                                                        16,
                                                         0x07,
                                                         BuildSetGeneratorConfigPayload(500U,
                                                                                        3500U,
@@ -501,7 +518,7 @@ internal static class Program
 
             var generatedChirpStartStreamResponse = ExecuteCommand(winUsbHandle,
                                                                    maxPacket,
-                                                                   15,
+                                                                   17,
                                                                    0x05,
                                                                    BuildStartStreamPayload(GeneratedSampleRateHz,
                                                                                            GeneratedChannelCount,
@@ -512,7 +529,7 @@ internal static class Program
 
             RunGeneratedAudioDemo(winUsbHandle, audioMaxPacket, AudioSourceDeviceGeneratedChirp, "Generated chirp");
 
-            var stopAfterGeneratedChirpResponse = ExecuteCommand(winUsbHandle, maxPacket, 16, 0x06, Array.Empty<byte>());
+            var stopAfterGeneratedChirpResponse = ExecuteCommand(winUsbHandle, maxPacket, 18, 0x06, Array.Empty<byte>());
             ValidateResponseStatus(stopAfterGeneratedChirpResponse, expectedStatus: 0, "StopStream after generated chirp");
             Console.WriteLine($"StopStream after generated chirp response: {DescribeFrame(stopAfterGeneratedChirpResponse)}");
             DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Post-generated chirp stop");
@@ -520,7 +537,7 @@ internal static class Program
 
             var setNoiseConfigResponse = ExecuteCommand(winUsbHandle,
                                                         maxPacket,
-                                                        17,
+                                                        19,
                                                         0x07,
                                                         BuildSetGeneratorConfigPayload(0U,
                                                                                        0U,
@@ -535,7 +552,7 @@ internal static class Program
 
             var generatedNoiseStartStreamResponse = ExecuteCommand(winUsbHandle,
                                                                    maxPacket,
-                                                                   18,
+                                                                   20,
                                                                    0x05,
                                                                    BuildStartStreamPayload(GeneratedSampleRateHz,
                                                                                            GeneratedChannelCount,
@@ -546,7 +563,7 @@ internal static class Program
 
             RunGeneratedAudioDemo(winUsbHandle, audioMaxPacket, AudioSourceDeviceGeneratedNoise, "Generated noise");
 
-            var stopAfterGeneratedNoiseResponse = ExecuteCommand(winUsbHandle, maxPacket, 19, 0x06, Array.Empty<byte>());
+            var stopAfterGeneratedNoiseResponse = ExecuteCommand(winUsbHandle, maxPacket, 21, 0x06, Array.Empty<byte>());
             ValidateResponseStatus(stopAfterGeneratedNoiseResponse, expectedStatus: 0, "StopStream after generated noise");
             Console.WriteLine($"StopStream after generated noise response: {DescribeFrame(stopAfterGeneratedNoiseResponse)}");
             DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Post-generated noise stop");
@@ -604,6 +621,89 @@ internal static class Program
                                                                                 NoiseTypeBinary,
                                                                                 AmplitudeEnvelopeTriangle,
                                                                                 DemoNoiseSeed));
+    }
+
+    private static void RunLoopbackStressDemo(IntPtr winUsbHandle, Dictionary<byte, WinUsbPipeInformation> endpoints, ushort maxPacket)
+    {
+        if (!endpoints.ContainsKey(AudioOutPipe) || !endpoints.ContainsKey(AudioInPipe))
+        {
+            Console.WriteLine("Skipping loopback stress test: audio pipes 0x02/0x82 not both present.");
+            return;
+        }
+
+        var audioMaxPacket = endpoints[(byte)AudioInPipe].MaximumPacketSize;
+        var startStreamResponse = ExecuteCommand(winUsbHandle,
+                                                 maxPacket,
+                                                 200,
+                                                 0x05,
+                                                 BuildStartStreamPayload(LoopbackSampleRateHz,
+                                                                         LoopbackChannelCount,
+                                                                         LoopbackContainerBitsPerSample,
+                                                                         AudioSourceHostRxLoopback));
+        ValidateResponseStatus(startStreamResponse, expectedStatus: 0, "StartStream (loopback stress)");
+        Console.WriteLine($"Loopback stress StartStream response: {DescribeFrame(startStreamResponse)}");
+
+        RunLoopbackBurstStress(winUsbHandle, audioMaxPacket);
+        PrintDebugStateSnapshot(winUsbHandle, maxPacket, 201, "Debug state after loopback stress");
+
+        var stopStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 202, 0x06, Array.Empty<byte>());
+        ValidateResponseStatus(stopStreamResponse, expectedStatus: 0, "StopStream (loopback stress)");
+        Console.WriteLine($"Loopback stress StopStream response: {DescribeFrame(stopStreamResponse)}");
+        DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Loopback stress post-stop");
+        PrintDebugStateSnapshot(winUsbHandle, maxPacket, 203, "Debug state after loopback stress stop");
+    }
+
+    private static void RunLoopbackBurstStress(IntPtr winUsbHandle, ushort audioMaxPacket)
+    {
+        uint sequenceNumber = 0;
+        uint timestamp = 0;
+        var totalPackets = 0;
+
+        for (var burstIndex = 0; burstIndex < LoopbackStressBurstCount; burstIndex++)
+        {
+            for (var packetIndex = 0; packetIndex < LoopbackStressPacketsPerBurst; packetIndex++)
+            {
+                var flags = (sequenceNumber == 0U) ? AudioFlagStartOfStream : (ushort)0;
+                var payload = BuildLoopbackPayload(frameCount: LoopbackStressFramesPerPacket,
+                                                   seed: burstIndex * 97 + packetIndex * 13,
+                                                   channelCount: LoopbackChannelCount);
+                var audioPacket = BuildAudioPacket(sequenceNumber,
+                                                   timestamp,
+                                                   LoopbackSampleRateHz,
+                                                   LoopbackChannelCount,
+                                                   LoopbackContainerBitsPerSample,
+                                                   flags,
+                                                   payload);
+
+                var echoedAudioPacket = ExchangeAudioPacket(winUsbHandle, audioMaxPacket, audioPacket);
+                var echoedInfo = ParseAudioPacket(echoedAudioPacket);
+                ValidateEchoedAudioPacket(echoedInfo,
+                                          sequenceNumber,
+                                          flags,
+                                          expectDiscontinuity: false,
+                                          payload);
+
+                sequenceNumber += 1U;
+                timestamp += LoopbackStressFramesPerPacket;
+                totalPackets += 1;
+            }
+
+            if (((burstIndex + 1) % LoopbackStressDebugSnapshotPeriod) == 0)
+            {
+                Console.WriteLine($"Loopback stress progress: completedBursts={burstIndex + 1} packets={totalPackets}");
+            }
+
+            Thread.Sleep(((burstIndex + 1) % 4) == 0 ? LoopbackStressLongPauseMs : LoopbackStressShortPauseMs);
+        }
+
+        Console.WriteLine($"Loopback stress summary: bursts={LoopbackStressBurstCount} packets={totalPackets} framesPerPacket={LoopbackStressFramesPerPacket} payloadBytesPerPacket={LoopbackStressFramesPerPacket * LoopbackChannelCount * sizeof(int)}");
+    }
+
+    private static void PrintDebugStateSnapshot(IntPtr winUsbHandle, ushort maxPacket, ushort sequence, string label)
+    {
+        var debugStateResponse = ExecuteCommand(winUsbHandle, maxPacket, sequence, 0x03, Array.Empty<byte>());
+        ValidateResponseStatus(debugStateResponse, expectedStatus: 0, label);
+        Console.WriteLine($"{label}: {DescribeFrame(debugStateResponse)}");
     }
 
     private static void RunGeneratedSourceScenario(IntPtr winUsbHandle,
@@ -806,7 +906,7 @@ internal static class Program
         for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
         {
             var leftSampleOffset = frameIndex * bytesPerFrame;
-            var sample = BinaryPrimitives.ReadInt32LittleEndian(packet.Payload.AsSpan(leftSampleOffset, bytesPerSample));
+            var sample = UnpackMsbAligned24(BinaryPrimitives.ReadInt32LittleEndian(packet.Payload.AsSpan(leftSampleOffset, bytesPerSample)));
 
             if (sample < minSample)
             {
@@ -838,7 +938,7 @@ internal static class Program
             for (var channelIndex = 0; channelIndex < channelCount; channelIndex++)
             {
                 var sample24 = CreateLoopbackSample24(seed, sampleIndex, channelIndex);
-                var sample32 = SignExtend24(sample24);
+                var sample32 = PackSample24ToMsbAligned32(sample24);
                 BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(sampleIndex * sizeof(int), sizeof(int)), sample32);
                 sampleIndex++;
             }
@@ -859,17 +959,14 @@ internal static class Program
         return magnitude;
     }
 
-    private static int SignExtend24(int sample24)
+    private static int PackSample24ToMsbAligned32(int sample24)
     {
-        var validBitsMask = (1 << LoopbackValidBitsPerSample) - 1;
-        var signBit = 1 << (LoopbackValidBitsPerSample - 1);
-        var masked = sample24 & validBitsMask;
-        if ((masked & signBit) != 0)
-        {
-            masked |= unchecked((int)0xFF000000);
-        }
+        return sample24 << 8;
+    }
 
-        return masked;
+    private static int UnpackMsbAligned24(int sample32)
+    {
+        return sample32 >> 8;
     }
 
     private static byte[] ExchangeAudioPacket(IntPtr winUsbHandle, ushort maxPacket, byte[] audioPacket)
@@ -1124,7 +1221,7 @@ internal static class Program
 
     private static string DescribeGetUsbDebugState(ProtocolFrame frame)
     {
-        if (frame.Payload.Length != 40)
+        if (frame.Payload.Length != 64)
         {
             return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} payload={Convert.ToHexString(frame.Payload)}";
         }
@@ -1134,8 +1231,14 @@ internal static class Program
         var lastStatus = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(8, 4));
         var usbSpeed = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(12, 4));
         var oversizedOutboundDropCount = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(16, 4));
+        var playbackFillLevelBytes = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(40, 4));
+        var playbackMinFillLevelBytes = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(44, 4));
+        var playbackMaxFillLevelBytes = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(48, 4));
+        var playbackUnderrunCount = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(52, 4));
+        var playbackOverrunCount = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(56, 4));
+        var playbackDroppedBytes = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(60, 4));
 
-        return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} stage=0x{stage:X8} lastEvent=0x{lastEvent:X8} lastStatus=0x{lastStatus:X8} usbSpeed={GetUsbSpeedName(usbSpeed)}({usbSpeed}) oversizedOutboundDrops={oversizedOutboundDropCount}";
+        return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} stage=0x{stage:X8} lastEvent=0x{lastEvent:X8} lastStatus=0x{lastStatus:X8} usbSpeed={GetUsbSpeedName(usbSpeed)}({usbSpeed}) oversizedOutboundDrops={oversizedOutboundDropCount} playbackFill={playbackFillLevelBytes} playbackMin={playbackMinFillLevelBytes} playbackMax={playbackMaxFillLevelBytes} underruns={playbackUnderrunCount} overruns={playbackOverrunCount} droppedBytes={playbackDroppedBytes}";
     }
 
     private static string DescribeStartStream(ProtocolFrame frame)
@@ -1338,9 +1441,10 @@ internal static class Program
             for (var channelIndex = 0; channelIndex < packet.ChannelCount; channelIndex++)
             {
                 var sampleOffset = frameOffset + (channelIndex * bytesPerSample);
-                var sample = BinaryPrimitives.ReadInt32LittleEndian(packet.Payload.AsSpan(sampleOffset, bytesPerSample));
+                var sampleRaw = BinaryPrimitives.ReadInt32LittleEndian(packet.Payload.AsSpan(sampleOffset, bytesPerSample));
+                var sample = UnpackMsbAligned24(sampleRaw);
 
-                ValidateSignExtended24BitSample(sample);
+                ValidateMsbAligned24BitSample(sampleRaw, sample);
 
                 if (!firstChannelSample.HasValue)
                 {
@@ -1354,10 +1458,15 @@ internal static class Program
         }
     }
 
-    private static void ValidateSignExtended24BitSample(int sample)
+    private static void ValidateMsbAligned24BitSample(int sampleRaw, int sample)
     {
         var minSample = -(1 << (GeneratedValidBitsPerSample - 1));
         var maxSample = (1 << (GeneratedValidBitsPerSample - 1)) - 1;
+
+        if ((sampleRaw & 0xFF) != 0)
+        {
+            throw new InvalidOperationException($"Generated sample 0x{sampleRaw:X8} is not MSB-aligned in its 32-bit slot.");
+        }
 
         if ((sample < minSample) || (sample > maxSample))
         {

@@ -337,10 +337,10 @@ Loopback payload convention:
 
 ```text
 Each sample is little-endian 32-bit.
-byte 0 = bits 7:0
-byte 1 = bits 15:8
-byte 2 = bits 23:16
-byte 3 = sign-extension of bit 23
+byte 0 = padding (0)
+byte 1 = bits 7:0
+byte 2 = bits 15:8
+byte 3 = bits 23:16 including sign bit
 ```
 
 - generated sine stream:
@@ -424,7 +424,7 @@ u32 sampleRateHz
 u8  payload[payloadBytes]
 ```
 
-Current loopback payload format is 24-bit PCM carried in a 32-bit little-endian container. The first three bytes of each 32-bit sample contain the valid PCM bits, and the fourth byte is sign-extension.
+Current loopback payload format is 24-bit PCM carried in a 32-bit little-endian slot. The sample is MSB-justified inside the 32-bit word, so byte 0 is padding and bytes 1..3 contain the signed 24-bit value.
 
 The same 32-bit container format is used by the device-generated sine, chirp, and noise sources.
 

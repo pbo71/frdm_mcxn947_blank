@@ -12,6 +12,7 @@ extern "C" {
 #include "task.h"
 #include "alive_service.h"
 #include "audio_tx_service.h"
+#include "services/audio_playback_buffer.h"
 #include "services/audio_stream_service.h"
 #include "services/control_plane_service.h"
 #include "usb_vendor_bulk.h"
@@ -22,6 +23,7 @@ void USB_DeviceClockInit(void);
 int main(void)
 {
     BOARD_InitHardware();
+    AudioPlaybackBuffer_Init();
     AudioStreamService_Init();
     ControlPlaneService_Init();
     USB_DeviceClockInit();

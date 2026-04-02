@@ -144,8 +144,8 @@ Stream control:
 
 - Streaming must be started explicitly with `StartStream` on the control plane before audio packets are accepted.
 - `StartStream` configures the expected `sampleRateHz`, `channelCount`, `bitsPerSample`, and `source` for the audio data plane.
-- Current streams use `48 kHz`, `2` channels, and `bitsPerSample = 32`, where the payload carries 24-bit PCM in a 32-bit little-endian container.
-- For that format, payload bytes `0..2` of each 32-bit sample contain the 24 valid PCM bits and byte `3` is the sign-extension of bit `23`.
+- Current streams use `48 kHz`, `1` or `2` channels, and `bitsPerSample = 32`, where the payload carries 24-bit PCM in a 32-bit little-endian slot.
+- For that format, each sample is MSB-justified in the 32-bit slot: byte `0` is padding and bytes `1..3` carry the signed 24-bit PCM value.
 - Audio packets with a format that does not match the active stream configuration are rejected.
 - `StopStream` stops the active stream on the control plane.
 - `END_OF_STREAM` in the audio header may still stop the active stream, but control-plane start/stop is the primary lifecycle mechanism.
