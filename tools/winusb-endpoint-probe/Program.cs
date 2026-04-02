@@ -48,6 +48,14 @@ internal static class Program
     private const uint DefaultNoiseSeed = 0x13579BDF;
     private const uint DemoNoiseSeed = 0x2468ACE1;
     private const int DrainEventAttemptsAfterStop = 4;
+    private const uint LoopbackSampleRateHz = 48000;
+    private const byte LoopbackChannelCount = 2;
+    private const byte LoopbackContainerBitsPerSample = 32;
+    private const int LoopbackValidBitsPerSample = 24;
+    private const uint GeneratedSampleRateHz = 48000;
+    private const byte GeneratedChannelCount = 2;
+    private const byte GeneratedContainerBitsPerSample = 32;
+    private const int GeneratedValidBitsPerSample = 24;
 
     private static readonly Guid DefaultInterfaceGuid = new("D5959801-45C1-49DB-9053-89B5365C2800");
 
@@ -387,7 +395,14 @@ internal static class Program
 
         if (endpoints.ContainsKey(AudioOutPipe) && endpoints.ContainsKey(AudioInPipe))
         {
-            var startStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 5, 0x05, BuildStartStreamPayload(48000U, 2, 16, AudioSourceHostRxLoopback));
+            var startStreamResponse = ExecuteCommand(winUsbHandle,
+                                                     maxPacket,
+                                                     5,
+                                                     0x05,
+                                                     BuildStartStreamPayload(LoopbackSampleRateHz,
+                                                                             LoopbackChannelCount,
+                                                                             LoopbackContainerBitsPerSample,
+                                                                             AudioSourceHostRxLoopback));
             ValidateResponseStatus(startStreamResponse, expectedStatus: 0, "StartStream");
             Console.WriteLine($"StartStream response: {DescribeFrame(startStreamResponse)}");
 
@@ -399,7 +414,14 @@ internal static class Program
             Console.WriteLine($"StopStream response: {DescribeFrame(stopStreamResponse)}");
             DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Post-stop");
 
-            var restartStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 7, 0x05, BuildStartStreamPayload(48000U, 2, 16, AudioSourceHostRxLoopback));
+            var restartStreamResponse = ExecuteCommand(winUsbHandle,
+                                                       maxPacket,
+                                                       7,
+                                                       0x05,
+                                                       BuildStartStreamPayload(LoopbackSampleRateHz,
+                                                                               LoopbackChannelCount,
+                                                                               LoopbackContainerBitsPerSample,
+                                                                               AudioSourceHostRxLoopback));
             ValidateResponseStatus(restartStreamResponse, expectedStatus: 0, "StartStream (EOS phase)");
             Console.WriteLine($"RestartStream response: {DescribeFrame(restartStreamResponse)}");
 
@@ -410,7 +432,14 @@ internal static class Program
             ValidateResponseStatus(stopAfterEosResponse, expectedStatus: 6, "StopStream after EOS");
             Console.WriteLine($"StopStream after EOS response: {DescribeFrame(stopAfterEosResponse)}");
 
-            var mismatchStartStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 9, 0x05, BuildStartStreamPayload(48000U, 2, 16, AudioSourceHostRxLoopback));
+            var mismatchStartStreamResponse = ExecuteCommand(winUsbHandle,
+                                                             maxPacket,
+                                                             9,
+                                                             0x05,
+                                                             BuildStartStreamPayload(LoopbackSampleRateHz,
+                                                                                     LoopbackChannelCount,
+                                                                                     LoopbackContainerBitsPerSample,
+                                                                                     AudioSourceHostRxLoopback));
             ValidateResponseStatus(mismatchStartStreamResponse, expectedStatus: 0, "StartStream (format mismatch phase)");
             Console.WriteLine($"Mismatch phase StartStream response: {DescribeFrame(mismatchStartStreamResponse)}");
 
@@ -436,7 +465,14 @@ internal static class Program
             ValidateResponseStatus(setSineConfigResponse, expectedStatus: 0, "SetGeneratorConfig (sine)");
             Console.WriteLine($"SetGeneratorConfig sine response: {DescribeFrame(setSineConfigResponse)}");
 
-            var generatedSineStartStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 12, 0x05, BuildStartStreamPayload(48000U, 2, 16, AudioSourceDeviceGeneratedSine));
+            var generatedSineStartStreamResponse = ExecuteCommand(winUsbHandle,
+                                                                  maxPacket,
+                                                                  12,
+                                                                  0x05,
+                                                                  BuildStartStreamPayload(GeneratedSampleRateHz,
+                                                                                          GeneratedChannelCount,
+                                                                                          GeneratedContainerBitsPerSample,
+                                                                                          AudioSourceDeviceGeneratedSine));
             ValidateResponseStatus(generatedSineStartStreamResponse, expectedStatus: 0, "StartStream (generated sine)");
             Console.WriteLine($"Generated sine StartStream response: {DescribeFrame(generatedSineStartStreamResponse)}");
 
@@ -463,7 +499,14 @@ internal static class Program
             ValidateResponseStatus(setChirpConfigResponse, expectedStatus: 0, "SetGeneratorConfig (chirp)");
             Console.WriteLine($"SetGeneratorConfig chirp response: {DescribeFrame(setChirpConfigResponse)}");
 
-            var generatedChirpStartStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 15, 0x05, BuildStartStreamPayload(48000U, 2, 16, AudioSourceDeviceGeneratedChirp));
+            var generatedChirpStartStreamResponse = ExecuteCommand(winUsbHandle,
+                                                                   maxPacket,
+                                                                   15,
+                                                                   0x05,
+                                                                   BuildStartStreamPayload(GeneratedSampleRateHz,
+                                                                                           GeneratedChannelCount,
+                                                                                           GeneratedContainerBitsPerSample,
+                                                                                           AudioSourceDeviceGeneratedChirp));
             ValidateResponseStatus(generatedChirpStartStreamResponse, expectedStatus: 0, "StartStream (generated chirp)");
             Console.WriteLine($"Generated chirp StartStream response: {DescribeFrame(generatedChirpStartStreamResponse)}");
 
@@ -490,7 +533,14 @@ internal static class Program
             ValidateResponseStatus(setNoiseConfigResponse, expectedStatus: 0, "SetGeneratorConfig (noise)");
             Console.WriteLine($"SetGeneratorConfig noise response: {DescribeFrame(setNoiseConfigResponse)}");
 
-            var generatedNoiseStartStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 18, 0x05, BuildStartStreamPayload(48000U, 2, 16, AudioSourceDeviceGeneratedNoise));
+            var generatedNoiseStartStreamResponse = ExecuteCommand(winUsbHandle,
+                                                                   maxPacket,
+                                                                   18,
+                                                                   0x05,
+                                                                   BuildStartStreamPayload(GeneratedSampleRateHz,
+                                                                                           GeneratedChannelCount,
+                                                                                           GeneratedContainerBitsPerSample,
+                                                                                           AudioSourceDeviceGeneratedNoise));
             ValidateResponseStatus(generatedNoiseStartStreamResponse, expectedStatus: 0, "StartStream (generated noise)");
             Console.WriteLine($"Generated noise StartStream response: {DescribeFrame(generatedNoiseStartStreamResponse)}");
 
@@ -570,7 +620,14 @@ internal static class Program
         ValidateResponseStatus(setConfigResponse, expectedStatus: 0, $"SetGeneratorConfig ({label})");
         Console.WriteLine($"{label} config response: {DescribeFrame(setConfigResponse)}");
 
-        var startStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, startSequence, 0x05, BuildStartStreamPayload(48000U, 2, 16, source));
+        var startStreamResponse = ExecuteCommand(winUsbHandle,
+                             maxPacket,
+                             startSequence,
+                             0x05,
+                             BuildStartStreamPayload(GeneratedSampleRateHz,
+                                         GeneratedChannelCount,
+                                         GeneratedContainerBitsPerSample,
+                                         source));
         ValidateResponseStatus(startStreamResponse, expectedStatus: 0, $"StartStream ({label})");
         Console.WriteLine($"{label} StartStream response: {DescribeFrame(startStreamResponse)}");
 
@@ -654,30 +711,38 @@ internal static class Program
         for (var packetIndex = 0; packetIndex < demoPackets.Length; packetIndex++)
         {
             var demoPacket = demoPackets[packetIndex];
-            var payload = Enumerable.Range(packetIndex * 32, 32).Select(value => (byte)value).ToArray();
+            var payload = BuildLoopbackPayload(frameCount: 4,
+                                               seed: packetIndex * 17,
+                                               channelCount: LoopbackChannelCount);
             var audioPacket = BuildAudioPacket(sequenceNumber: demoPacket.SequenceNumber,
                                                timestamp: demoPacket.Timestamp,
-                                               sampleRateHz: 48000U,
-                                               channelCount: 2,
-                                               bitsPerSample: 16,
+                                               sampleRateHz: LoopbackSampleRateHz,
+                                               channelCount: LoopbackChannelCount,
+                                               bitsPerSample: LoopbackContainerBitsPerSample,
                                                flags: demoPacket.Flags,
                                                payload: payload);
 
             var echoedAudioPacket = ExchangeAudioPacket(winUsbHandle, audioMaxPacket, audioPacket);
             var echoedInfo = ParseAudioPacket(echoedAudioPacket);
-            ValidateEchoedAudioPacket(echoedInfo, demoPacket.SequenceNumber, demoPacket.Flags, demoPacket.ExpectDiscontinuity);
+            ValidateEchoedAudioPacket(echoedInfo,
+                                      demoPacket.SequenceNumber,
+                                      demoPacket.Flags,
+                                      demoPacket.ExpectDiscontinuity,
+                                      payload);
             Console.WriteLine($"Audio echo {packetIndex + 1}/{demoPackets.Length}: {DescribeAudioPacket(echoedAudioPacket)}");
         }
     }
 
     private static void RunEndOfStreamLoopbackDemo(IntPtr winUsbHandle, ushort audioMaxPacket)
     {
-        var payload = Enumerable.Range(96, 32).Select(value => (byte)value).ToArray();
+                var payload = BuildLoopbackPayload(frameCount: 4,
+                                                                                     seed: 96,
+                                                                                     channelCount: LoopbackChannelCount);
         var eosPacket = BuildAudioPacket(sequenceNumber: 0U,
                                          timestamp: 0U,
-                                         sampleRateHz: 48000U,
-                                         channelCount: 2,
-                                         bitsPerSample: 16,
+                                                                                 sampleRateHz: LoopbackSampleRateHz,
+                                                                                 channelCount: LoopbackChannelCount,
+                                                                                 bitsPerSample: LoopbackContainerBitsPerSample,
                                          flags: (ushort)(AudioFlagStartOfStream | AudioFlagEndOfStream),
                                          payload: payload);
 
@@ -686,18 +751,21 @@ internal static class Program
         ValidateEchoedAudioPacket(echoedInfo,
                                   expectedSequenceNumber: 0U,
                                   sentFlags: (ushort)(AudioFlagStartOfStream | AudioFlagEndOfStream),
-                                  expectDiscontinuity: false);
+                                  expectDiscontinuity: false,
+                                  expectedPayload: payload);
         Console.WriteLine($"Audio EOS echo: {DescribeAudioPacket(echoedAudioPacket)}");
     }
 
     private static void RunFormatMismatchDropDemo(IntPtr winUsbHandle, ushort audioMaxPacket)
     {
-        var payload = Enumerable.Range(128, 32).Select(value => (byte)value).ToArray();
+        var payload = BuildLoopbackPayload(frameCount: 4,
+                                           seed: 128,
+                                           channelCount: LoopbackChannelCount);
         var mismatchedPacket = BuildAudioPacket(sequenceNumber: 0U,
                                                 timestamp: 0U,
                                                 sampleRateHz: 44100U,
-                                                channelCount: 2,
-                                                bitsPerSample: 16,
+                                                channelCount: LoopbackChannelCount,
+                                                bitsPerSample: LoopbackContainerBitsPerSample,
                                                 flags: AudioFlagStartOfStream,
                                                 payload: payload);
 
@@ -722,8 +790,86 @@ internal static class Program
 
             var packetInfo = ParseAudioPacket(audioPacket);
             ValidateGeneratedAudioPacket(packetInfo, packetIndex, source);
-            Console.WriteLine($"{label} {packetIndex + 1}/3: {DescribeAudioPacket(audioPacket)}");
+            Console.WriteLine($"{label} {packetIndex + 1}/3: {DescribeAudioPacket(audioPacket)} {DescribeGeneratedPayload(packetInfo)}");
         }
+    }
+
+    private static string DescribeGeneratedPayload(AudioPacketInfo packet)
+    {
+        var bytesPerSample = packet.BitsPerSample / 8;
+        var bytesPerFrame = bytesPerSample * packet.ChannelCount;
+        var frameCount = packet.PayloadBytes / bytesPerFrame;
+        var minSample = int.MaxValue;
+        var maxSample = int.MinValue;
+        var previewSamples = new List<int>();
+
+        for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
+        {
+            var leftSampleOffset = frameIndex * bytesPerFrame;
+            var sample = BinaryPrimitives.ReadInt32LittleEndian(packet.Payload.AsSpan(leftSampleOffset, bytesPerSample));
+
+            if (sample < minSample)
+            {
+                minSample = sample;
+            }
+
+            if (sample > maxSample)
+            {
+                maxSample = sample;
+            }
+
+            if (previewSamples.Count < 4)
+            {
+                previewSamples.Add(sample);
+            }
+        }
+
+        var preview = string.Join(",", previewSamples);
+        return $"frames={frameCount} min={minSample} max={maxSample} firstL=[{preview}]";
+    }
+
+    private static byte[] BuildLoopbackPayload(int frameCount, int seed, byte channelCount)
+    {
+        var payload = new byte[frameCount * channelCount * sizeof(int)];
+        var sampleIndex = 0;
+
+        for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
+        {
+            for (var channelIndex = 0; channelIndex < channelCount; channelIndex++)
+            {
+                var sample24 = CreateLoopbackSample24(seed, sampleIndex, channelIndex);
+                var sample32 = SignExtend24(sample24);
+                BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(sampleIndex * sizeof(int), sizeof(int)), sample32);
+                sampleIndex++;
+            }
+        }
+
+        return payload;
+    }
+
+    private static int CreateLoopbackSample24(int seed, int sampleIndex, int channelIndex)
+    {
+        var magnitudeMask = (1 << (LoopbackValidBitsPerSample - 1)) - 1;
+        var magnitude = ((seed * 131) + (sampleIndex * 977) + (channelIndex * 4093)) & magnitudeMask;
+        if (((sampleIndex + channelIndex) & 1) != 0)
+        {
+            return -magnitude;
+        }
+
+        return magnitude;
+    }
+
+    private static int SignExtend24(int sample24)
+    {
+        var validBitsMask = (1 << LoopbackValidBitsPerSample) - 1;
+        var signBit = 1 << (LoopbackValidBitsPerSample - 1);
+        var masked = sample24 & validBitsMask;
+        if ((masked & signBit) != 0)
+        {
+            masked |= unchecked((int)0xFF000000);
+        }
+
+        return masked;
     }
 
     private static byte[] ExchangeAudioPacket(IntPtr winUsbHandle, ushort maxPacket, byte[] audioPacket)
@@ -1060,7 +1206,22 @@ internal static class Program
         var bitsPerSample = packet[19];
         var sampleRateHz = BinaryPrimitives.ReadUInt32LittleEndian(packet.AsSpan(20, 4));
 
-        return new AudioPacketInfo(magic, version, headerSize, flags, sequenceNumber, timestamp, payloadBytes, channelCount, bitsPerSample, sampleRateHz);
+        if (packet.Length != (AudioHeaderSize + payloadBytes))
+        {
+            throw new InvalidOperationException($"Audio packet length mismatch: header says {payloadBytes} payload bytes, total is {packet.Length}.");
+        }
+
+        return new AudioPacketInfo(magic,
+                                   version,
+                                   headerSize,
+                                   flags,
+                                   sequenceNumber,
+                                   timestamp,
+                                   payloadBytes,
+                                   channelCount,
+                                   bitsPerSample,
+                                   sampleRateHz,
+                                   packet.AsSpan(AudioHeaderSize, payloadBytes).ToArray());
     }
 
     private static void ValidateResponseStatus(ProtocolFrame responseFrame, byte expectedStatus, string operationName)
@@ -1074,7 +1235,8 @@ internal static class Program
     private static void ValidateEchoedAudioPacket(AudioPacketInfo echoedPacket,
                                                   uint expectedSequenceNumber,
                                                   ushort sentFlags,
-                                                  bool expectDiscontinuity)
+                                                  bool expectDiscontinuity,
+                                                  byte[] expectedPayload)
     {
         if (echoedPacket.Magic != AudioHeaderMagic)
         {
@@ -1103,10 +1265,18 @@ internal static class Program
         {
             throw new InvalidOperationException($"Unexpected echoed flags 0x{echoedPacket.Flags:X4} for sequence {expectedSequenceNumber}; expected base flags 0x{expectedNonDiscontinuityFlags:X4}.");
         }
+
+        if (!echoedPacket.Payload.SequenceEqual(expectedPayload))
+        {
+            throw new InvalidOperationException($"Echoed audio payload mismatch for sequence {expectedSequenceNumber}.");
+        }
     }
 
     private static void ValidateGeneratedAudioPacket(AudioPacketInfo packet, uint expectedSequenceNumber, byte source)
     {
+        var bytesPerSample = packet.BitsPerSample / 8;
+        var bytesPerFrame = bytesPerSample * packet.ChannelCount;
+
         if (packet.Magic != AudioHeaderMagic)
         {
             throw new InvalidOperationException($"Unexpected generated audio magic 0x{packet.Magic:X4}.");
@@ -1122,9 +1292,22 @@ internal static class Program
             throw new InvalidOperationException($"Unexpected generated sequence {packet.SequenceNumber}, expected {expectedSequenceNumber}.");
         }
 
-        if ((packet.ChannelCount != 2) || (packet.BitsPerSample != 16) || (packet.SampleRateHz != 48000U))
+        if ((packet.ChannelCount != GeneratedChannelCount) ||
+            (packet.BitsPerSample != GeneratedContainerBitsPerSample) ||
+            (packet.SampleRateHz != GeneratedSampleRateHz))
         {
             throw new InvalidOperationException($"Unexpected generated audio format: channels={packet.ChannelCount}, bitsPerSample={packet.BitsPerSample}, sampleRate={packet.SampleRateHz}.");
+        }
+
+        if ((bytesPerFrame == 0) || ((packet.PayloadBytes % bytesPerFrame) != 0))
+        {
+            throw new InvalidOperationException($"Generated payload is not frame-aligned: payloadBytes={packet.PayloadBytes}, bytesPerFrame={bytesPerFrame}.");
+        }
+
+        var expectedTimestamp = expectedSequenceNumber * (packet.PayloadBytes / bytesPerFrame);
+        if (packet.Timestamp != expectedTimestamp)
+        {
+            throw new InvalidOperationException($"Unexpected generated timestamp {packet.Timestamp}, expected {expectedTimestamp}.");
         }
 
         var hasStartFlag = (packet.Flags & AudioFlagStartOfStream) != 0;
@@ -1136,6 +1319,49 @@ internal static class Program
         if ((source == AudioSourceDeviceGeneratedNoise) && (packet.PayloadBytes == 0))
         {
             throw new InvalidOperationException("Generated noise packet had no payload.");
+        }
+
+        ValidateGeneratedPayload(packet, bytesPerSample, bytesPerFrame);
+    }
+
+    private static void ValidateGeneratedPayload(AudioPacketInfo packet, int bytesPerSample, int bytesPerFrame)
+    {
+        if (packet.Payload.Length != packet.PayloadBytes)
+        {
+            throw new InvalidOperationException($"Generated payload length mismatch: header says {packet.PayloadBytes}, actual {packet.Payload.Length}.");
+        }
+
+        for (var frameOffset = 0; frameOffset < packet.Payload.Length; frameOffset += bytesPerFrame)
+        {
+            int? firstChannelSample = null;
+
+            for (var channelIndex = 0; channelIndex < packet.ChannelCount; channelIndex++)
+            {
+                var sampleOffset = frameOffset + (channelIndex * bytesPerSample);
+                var sample = BinaryPrimitives.ReadInt32LittleEndian(packet.Payload.AsSpan(sampleOffset, bytesPerSample));
+
+                ValidateSignExtended24BitSample(sample);
+
+                if (!firstChannelSample.HasValue)
+                {
+                    firstChannelSample = sample;
+                }
+                else if (sample != firstChannelSample.Value)
+                {
+                    throw new InvalidOperationException($"Generated stereo channels diverged at payload offset {frameOffset}: left={firstChannelSample.Value}, right={sample}.");
+                }
+            }
+        }
+    }
+
+    private static void ValidateSignExtended24BitSample(int sample)
+    {
+        var minSample = -(1 << (GeneratedValidBitsPerSample - 1));
+        var maxSample = (1 << (GeneratedValidBitsPerSample - 1)) - 1;
+
+        if ((sample < minSample) || (sample > maxSample))
+        {
+            throw new InvalidOperationException($"Generated sample {sample} is outside the signed 24-bit range.");
         }
     }
 
@@ -1392,5 +1618,6 @@ internal static class Program
                                                    ushort PayloadBytes,
                                                    byte ChannelCount,
                                                    byte BitsPerSample,
-                                                   uint SampleRateHz);
+                                                   uint SampleRateHz,
+                                                   byte[] Payload);
 }

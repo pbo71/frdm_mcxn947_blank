@@ -329,8 +329,18 @@ Examples:
 ```text
 sampleRateHz = 48000
 channelCount = 2
-bitsPerSample = 16
+bitsPerSample = 32
 source = 0
+```
+
+Loopback payload convention:
+
+```text
+Each sample is little-endian 32-bit.
+byte 0 = bits 7:0
+byte 1 = bits 15:8
+byte 2 = bits 23:16
+byte 3 = sign-extension of bit 23
 ```
 
 - generated sine stream:
@@ -338,7 +348,7 @@ source = 0
 ```text
 sampleRateHz = 48000
 channelCount = 2
-bitsPerSample = 16
+bitsPerSample = 32
 source = 1
 ```
 
@@ -347,7 +357,7 @@ source = 1
 ```text
 sampleRateHz = 48000
 channelCount = 2
-bitsPerSample = 16
+bitsPerSample = 32
 source = 2
 ```
 
@@ -356,9 +366,11 @@ source = 2
 ```text
 sampleRateHz = 48000
 channelCount = 2
-bitsPerSample = 16
+bitsPerSample = 32
 source = 3
 ```
+
+The generated sources use the same 32-bit little-endian container as loopback. The generator control-plane `amplitude` field remains 16-bit and is scaled into the 24-bit sample range inside the device.
 
 Recommended order when using generated sources:
 
@@ -411,6 +423,10 @@ u8  bitsPerSample
 u32 sampleRateHz
 u8  payload[payloadBytes]
 ```
+
+Current loopback payload format is 24-bit PCM carried in a 32-bit little-endian container. The first three bytes of each 32-bit sample contain the valid PCM bits, and the fourth byte is sign-extension.
+
+The same 32-bit container format is used by the device-generated sine, chirp, and noise sources.
 
 Flags:
 
@@ -695,7 +711,7 @@ var info = await controlPlane.GetInfoAsync();
 var start = await controlPlane.StartStreamAsync(
     sampleRateHz: 48000,
     channelCount: 2,
-    bitsPerSample: 16);
+  bitsPerSample: 32);
 
 if (start.Status != 0)
 {
@@ -708,7 +724,7 @@ await audio.SendPacketAsync(new AudioPacket
     SequenceNumber = 0,
     Timestamp = 0,
     ChannelCount = 2,
-    BitsPerSample = 16,
+    BitsPerSample = 32,
     SampleRateHz = 48000,
     Payload = pcmBytes,
 });

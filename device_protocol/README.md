@@ -39,6 +39,7 @@ Audio data-plane rules:
 - Audio packets must start with `audio_stream_header_t`.
 - `payloadBytes + headerSize` must match the USB packet length exactly.
 - `sampleRateHz`, `channelCount`, and `bitsPerSample` must be non-zero.
+- `payloadBytes` must be an integer number of audio frames for the active stream format.
 - The audio service marks outbound packets with `DISCONTINUITY` if sequence numbers jump.
 - `END_OF_STREAM` stops the current stream and emits a control-plane `StreamStopped` event.
 
@@ -143,10 +144,13 @@ Stream control:
 
 - Streaming must be started explicitly with `StartStream` on the control plane before audio packets are accepted.
 - `StartStream` configures the expected `sampleRateHz`, `channelCount`, `bitsPerSample`, and `source` for the audio data plane.
+- Current streams use `48 kHz`, `2` channels, and `bitsPerSample = 32`, where the payload carries 24-bit PCM in a 32-bit little-endian container.
+- For that format, payload bytes `0..2` of each 32-bit sample contain the 24 valid PCM bits and byte `3` is the sign-extension of bit `23`.
 - Audio packets with a format that does not match the active stream configuration are rejected.
 - `StopStream` stops the active stream on the control plane.
 - `END_OF_STREAM` in the audio header may still stop the active stream, but control-plane start/stop is the primary lifecycle mechanism.
 - `DeviceGeneratedSine` streams a generated 1 kHz sine wave from the device on `AUDIO IN` and does not require audio packets on `AUDIO OUT`.
+- Generated-source amplitude is still configured with the existing `u16 amplitude` control field and is scaled into the 24-bit sample domain internally.
 - `SetGeneratorConfig` updates generated-source parameters before starting a generated stream.
 - `DeviceGeneratedChirp` uses `primaryFrequencyHz` and `secondaryFrequencyHz` as the sweep start/end frequencies, and `modulationPeriodMs` as sweep duration.
 - `DeviceGeneratedNoise` uses `noiseType` to select `White`, `SampleHold`, or `Binary` noise.

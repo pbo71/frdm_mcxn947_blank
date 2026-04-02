@@ -27,7 +27,7 @@ struct AudioStreamServiceState
     uint32_t generatedModulationPeriodMs;
     uint32_t generatedNoiseSeed;
     uint32_t generatedNoiseState;
-    int16_t generatedHeldNoiseSample;
+    int32_t generatedHeldNoiseSample;
     uint16_t generatedAmplitude;
     uint8_t channelCount;
     uint8_t bitsPerSample;
@@ -48,6 +48,8 @@ constexpr uint32_t kGeneratedMinModulationSamples = 16U;
 constexpr float kGeneratedPhaseScale = 65536.0F;
 constexpr float kGeneratedAngleScale = 6.28318530717958647692F / kGeneratedPhaseScale;
 constexpr uint16_t kGeneratedDefaultAmplitude = 12000U;
+constexpr int32_t kGeneratedMaxSample24 = 0x7FFFFF;
+constexpr int32_t kGeneratedMinSample24 = -0x800000;
 
 bool AudioStreamService_IsSourceValid(uint8_t source)
 {
@@ -55,6 +57,11 @@ bool AudioStreamService_IsSourceValid(uint8_t source)
            (source == AUDIO_STREAM_SERVICE_SOURCE_DEVICE_GENERATED_SINE) ||
            (source == AUDIO_STREAM_SERVICE_SOURCE_DEVICE_GENERATED_CHIRP) ||
            (source == AUDIO_STREAM_SERVICE_SOURCE_DEVICE_GENERATED_NOISE);
+}
+
+bool AudioStreamService_IsContainerBitsValid(uint8_t bitsPerSample)
+{
+    return (bitsPerSample == 16U) || (bitsPerSample == 32U);
 }
 
 bool AudioStreamService_IsFormatValid(uint32_t sampleRateHz,
@@ -69,14 +76,18 @@ bool AudioStreamService_IsFormatValid(uint32_t sampleRateHz,
 
     if (source != AUDIO_STREAM_SERVICE_SOURCE_HOST_RX_LOOPBACK)
     {
-        return (bitsPerSample == 16U) && ((channelCount == 1U) || (channelCount == 2U));
+        return AudioStreamService_IsContainerBitsValid(bitsPerSample) &&
+               ((channelCount == 1U) || (channelCount == 2U));
     }
 
-    return true;
+    return AudioStreamService_IsContainerBitsValid(bitsPerSample) &&
+           ((channelCount == 1U) || (channelCount == 2U));
 }
 
 bool AudioStreamService_IsHeaderValid(const audio_stream_header_t &header, uint32_t rxLength)
 {
+    const uint16_t bytesPerFrame = static_cast<uint16_t>((header.bitsPerSample / 8U) * header.channelCount);
+
     if (header.magic != AUDIO_STREAM_HEADER_MAGIC)
     {
         return false;
@@ -98,6 +109,16 @@ bool AudioStreamService_IsHeaderValid(const audio_stream_header_t &header, uint3
     }
 
     if ((header.channelCount == 0U) || (header.bitsPerSample == 0U))
+    {
+        return false;
+    }
+
+    if (!AudioStreamService_IsContainerBitsValid(header.bitsPerSample))
+    {
+        return false;
+    }
+
+    if ((header.channelCount > 2U) || (bytesPerFrame == 0U) || ((header.payloadBytes % bytesPerFrame) != 0U))
     {
         return false;
     }
@@ -294,23 +315,46 @@ float AudioStreamService_GetEnvelopeScale(uint32_t sampleIndex)
     }
 }
 
-int16_t AudioStreamService_ScaleGeneratedSample(int16_t sampleValue, uint32_t sampleIndex)
+int32_t AudioStreamService_ClampGeneratedSample24(int32_t sampleValue)
 {
-    const float scale = AudioStreamService_GetEnvelopeScale(sampleIndex);
-    return static_cast<int16_t>(static_cast<float>(sampleValue) * scale);
+    if (sampleValue > kGeneratedMaxSample24)
+    {
+        return kGeneratedMaxSample24;
+    }
+
+    if (sampleValue < kGeneratedMinSample24)
+    {
+        return kGeneratedMinSample24;
+    }
+
+    return sampleValue;
 }
 
-int16_t AudioStreamService_GenerateSineSample(void)
+int32_t AudioStreamService_GetScaledAmplitude24(void)
+{
+    return static_cast<int32_t>((static_cast<int64_t>(g_audioStreamServiceState.generatedAmplitude) *
+                                 static_cast<int64_t>(kGeneratedMaxSample24)) /
+                                32767LL);
+}
+
+int32_t AudioStreamService_ScaleGeneratedSample(int32_t sampleValue, uint32_t sampleIndex)
+{
+    const float scale = AudioStreamService_GetEnvelopeScale(sampleIndex);
+    return AudioStreamService_ClampGeneratedSample24(static_cast<int32_t>(static_cast<float>(sampleValue) * scale));
+}
+
+int32_t AudioStreamService_GenerateSineSample(void)
 {
     const float phase = static_cast<float>(g_audioStreamServiceState.generatedPhaseQ16) * kGeneratedAngleScale;
     const uint32_t sampleIndex = g_audioStreamServiceState.generatedTimestamp;
-    const int16_t sampleValue = static_cast<int16_t>(std::sin(phase) * static_cast<float>(g_audioStreamServiceState.generatedAmplitude));
+    const int32_t amplitude24 = AudioStreamService_GetScaledAmplitude24();
+    const int32_t sampleValue = static_cast<int32_t>(std::sin(phase) * static_cast<float>(amplitude24));
 
     g_audioStreamServiceState.generatedPhaseQ16 += g_audioStreamServiceState.generatedPhaseStepQ16;
     return AudioStreamService_ScaleGeneratedSample(sampleValue, sampleIndex);
 }
 
-int16_t AudioStreamService_GenerateChirpSample(void)
+int32_t AudioStreamService_GenerateChirpSample(void)
 {
     const uint32_t sampleIndex = g_audioStreamServiceState.generatedTimestamp;
     const uint32_t sweepSamples = AudioStreamService_GetModulationPeriodSamples();
@@ -320,27 +364,31 @@ int16_t AudioStreamService_GenerateChirpSample(void)
                                    (static_cast<float>(g_audioStreamServiceState.generatedSecondaryFrequencyHz) -
                                     static_cast<float>(g_audioStreamServiceState.generatedPrimaryFrequencyHz)) * ratio;
     const float phase = static_cast<float>(g_audioStreamServiceState.generatedPhaseQ16) * kGeneratedAngleScale;
-    const int16_t sampleValue = static_cast<int16_t>(std::sin(phase) * static_cast<float>(g_audioStreamServiceState.generatedAmplitude));
+    const int32_t amplitude24 = AudioStreamService_GetScaledAmplitude24();
+    const int32_t sampleValue = static_cast<int32_t>(std::sin(phase) * static_cast<float>(amplitude24));
 
     g_audioStreamServiceState.generatedPhaseStepQ16 = AudioStreamService_ComputePhaseStepQ16(static_cast<uint32_t>(currentFrequency));
     g_audioStreamServiceState.generatedPhaseQ16 += g_audioStreamServiceState.generatedPhaseStepQ16;
     return AudioStreamService_ScaleGeneratedSample(sampleValue, sampleIndex);
 }
 
-int16_t AudioStreamService_GenerateWhiteNoiseSample(void)
+int32_t AudioStreamService_GenerateWhiteNoiseSample(void)
 {
-    const int32_t centered = static_cast<int32_t>((g_audioStreamServiceState.generatedNoiseState >> 16U) & 0xFFFFU) - 32768;
-    return static_cast<int16_t>((centered * static_cast<int32_t>(g_audioStreamServiceState.generatedAmplitude)) / 32767);
+    const int32_t centered = static_cast<int32_t>((g_audioStreamServiceState.generatedNoiseState >> 8U) & 0x00FFFFFFU) - 0x00800000;
+    const int32_t amplitude24 = AudioStreamService_GetScaledAmplitude24();
+    return static_cast<int32_t>((static_cast<int64_t>(centered) * static_cast<int64_t>(amplitude24)) /
+                                static_cast<int64_t>(kGeneratedMaxSample24));
 }
 
-int16_t AudioStreamService_GenerateNoiseSample(void)
+int32_t AudioStreamService_GenerateNoiseSample(void)
 {
     const uint32_t sampleIndex = g_audioStreamServiceState.generatedTimestamp;
     const uint32_t holdSamples = AudioStreamService_GetModulationPeriodSamples();
+    const int32_t amplitude24 = AudioStreamService_GetScaledAmplitude24();
 
     g_audioStreamServiceState.generatedNoiseState = (g_audioStreamServiceState.generatedNoiseState * 1664525U) + 1013904223U;
 
-    int16_t sampleValue;
+    int32_t sampleValue;
 
     switch (g_audioStreamServiceState.generatedNoiseType)
     {
@@ -354,8 +402,8 @@ int16_t AudioStreamService_GenerateNoiseSample(void)
 
         case AUDIO_STREAM_SERVICE_NOISE_TYPE_BINARY:
             sampleValue = ((g_audioStreamServiceState.generatedNoiseState & 0x80000000U) != 0U) ?
-                              static_cast<int16_t>(g_audioStreamServiceState.generatedAmplitude) :
-                              static_cast<int16_t>(-static_cast<int32_t>(g_audioStreamServiceState.generatedAmplitude));
+                              amplitude24 :
+                              -amplitude24;
             break;
 
         case AUDIO_STREAM_SERVICE_NOISE_TYPE_WHITE:
@@ -367,7 +415,7 @@ int16_t AudioStreamService_GenerateNoiseSample(void)
     return AudioStreamService_ScaleGeneratedSample(sampleValue, sampleIndex);
 }
 
-int16_t AudioStreamService_GenerateSample(void)
+int32_t AudioStreamService_GenerateSample(void)
 {
     switch (g_audioStreamServiceState.source)
     {
@@ -630,7 +678,7 @@ extern "C" bool AudioStreamService_TryBuildGeneratedPacket(uint8_t *txBuffer,
     uint16_t bytesPerFrame;
     uint32_t frameCount;
     uint32_t packetTimestamp;
-    int16_t *sampleBuffer;
+    uint8_t *payloadBuffer;
 
     if ((txBuffer == nullptr) || (txLength == nullptr))
     {
@@ -666,16 +714,27 @@ extern "C" bool AudioStreamService_TryBuildGeneratedPacket(uint8_t *txBuffer,
     header.sampleRateHz = g_audioStreamServiceState.sampleRateHz;
 
     memcpy(txBuffer, &header, sizeof(header));
-    sampleBuffer = reinterpret_cast<int16_t *>(txBuffer + sizeof(header));
+    payloadBuffer = txBuffer + sizeof(header);
     frameCount = payloadBytes / bytesPerFrame;
 
     for (uint32_t frameIndex = 0U; frameIndex < frameCount; ++frameIndex)
     {
-        const int16_t sampleValue = AudioStreamService_GenerateSample();
+        const int32_t sampleValue = AudioStreamService_GenerateSample();
 
         for (uint8_t channelIndex = 0U; channelIndex < g_audioStreamServiceState.channelCount; ++channelIndex)
         {
-            sampleBuffer[(frameIndex * g_audioStreamServiceState.channelCount) + channelIndex] = sampleValue;
+            const uint32_t sampleOffset = ((frameIndex * g_audioStreamServiceState.channelCount) + channelIndex) *
+                                          (g_audioStreamServiceState.bitsPerSample / 8U);
+
+            if (g_audioStreamServiceState.bitsPerSample == 16U)
+            {
+                const int16_t sample16 = static_cast<int16_t>(sampleValue >> 8U);
+                memcpy(payloadBuffer + sampleOffset, &sample16, sizeof(sample16));
+            }
+            else
+            {
+                memcpy(payloadBuffer + sampleOffset, &sampleValue, sizeof(sampleValue));
+            }
         }
 
         g_audioStreamServiceState.generatedTimestamp += 1U;
