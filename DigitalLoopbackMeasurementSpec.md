@@ -185,3 +185,5 @@ The current baseline is defined by these two matrix types:
 ## Versioning
 
 If the measurement method changes materially, create `v2.0` rather than silently changing the meaning of `v1.0` results.
+
+The matching release-gate style regression pack for this method is documented in `DigitalLoopbackRegressionPack.md`.

@@ -86,3 +86,4 @@ If you want to be more selective, stage only the project code and config files f
 - The control protocol now includes `I2cWriteRegister` and `I2cReadRegister` on the codec I2C bus; SGTL5000 uses 7-bit address `0x0A` with 2-byte register addresses.
 - The host reference tool is useful for validating control-plane and generated-audio behavior over WinUSB.
 - The current digital FFT/THD baseline procedure is documented in `DigitalLoopbackMeasurementSpec.md`.
+- The current regression gate for that baseline is documented in `DigitalLoopbackRegressionPack.md`.
