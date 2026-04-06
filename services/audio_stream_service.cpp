@@ -35,6 +35,7 @@ struct AudioStreamServiceState
     uint8_t source;
     uint8_t generatedNoiseType;
     uint8_t generatedAmplitudeEnvelope;
+    uint32_t discontinuityCount;
 };
 
 AudioStreamServiceState g_audioStreamServiceState{};
@@ -461,6 +462,7 @@ extern "C" void AudioStreamService_Init(void)
     g_audioStreamServiceState.generatedHeldNoiseSample = 0;
     g_audioStreamServiceState.generatedNoiseType = AUDIO_STREAM_SERVICE_NOISE_TYPE_WHITE;
     g_audioStreamServiceState.generatedAmplitudeEnvelope = AUDIO_STREAM_SERVICE_AMPLITUDE_ENVELOPE_CONSTANT;
+    g_audioStreamServiceState.discontinuityCount = 0U;
     AudioStreamService_ResetGeneratedState();
 }
 
@@ -489,6 +491,7 @@ extern "C" void AudioStreamService_OnTransportReset(void)
     g_audioStreamServiceState.generatedHeldNoiseSample = 0;
     g_audioStreamServiceState.generatedNoiseType = AUDIO_STREAM_SERVICE_NOISE_TYPE_WHITE;
     g_audioStreamServiceState.generatedAmplitudeEnvelope = AUDIO_STREAM_SERVICE_AMPLITUDE_ENVELOPE_CONSTANT;
+    g_audioStreamServiceState.discontinuityCount = 0U;
     AudioStreamService_ResetGeneratedState();
 }
 
@@ -505,6 +508,7 @@ extern "C" void AudioStreamService_OnTransportReady(uint16_t maxAudioPacketSize)
     g_audioStreamServiceState.source = AUDIO_STREAM_SERVICE_SOURCE_HOST_RX_LOOPBACK;
     g_audioStreamServiceState.generatedNoiseSeed = kGeneratedNoiseSeed;
     g_audioStreamServiceState.generatedNoiseState = kGeneratedNoiseSeed;
+    g_audioStreamServiceState.discontinuityCount = 0U;
     AudioStreamService_ResetGeneratedState();
 }
 
@@ -534,6 +538,7 @@ extern "C" bool AudioStreamService_Start(uint32_t sampleRateHz,
     g_audioStreamServiceState.channelCount = channelCount;
     g_audioStreamServiceState.bitsPerSample = bitsPerSample;
     g_audioStreamServiceState.source = source;
+    g_audioStreamServiceState.discontinuityCount = 0U;
     AudioStreamService_ResetGeneratedState();
 
     if (AudioStreamService_IsGeneratorSource(source))
@@ -558,7 +563,7 @@ extern "C" bool AudioStreamService_Stop(uint32_t stopReason)
         return false;
     }
 
-    AudioPlaybackBuffer_Reset();
+    AudioPlaybackBuffer_ClearData();
     g_audioStreamServiceState.streaming = false;
     g_audioStreamServiceState.nextExpectedSequenceNumber = 0U;
     g_audioStreamServiceState.source = AUDIO_STREAM_SERVICE_SOURCE_HOST_RX_LOOPBACK;
@@ -668,6 +673,7 @@ extern "C" bool AudioStreamService_HandleRxPacket(const uint8_t *rxBuffer,
     if (wasStreaming && (header.sequenceNumber != g_audioStreamServiceState.nextExpectedSequenceNumber))
     {
         txHeader.flags |= AUDIO_STREAM_FLAG_DISCONTINUITY;
+        g_audioStreamServiceState.discontinuityCount += 1U;
     }
 
     g_audioStreamServiceState.nextExpectedSequenceNumber = header.sequenceNumber + 1U;
@@ -684,6 +690,11 @@ extern "C" bool AudioStreamService_HandleRxPacket(const uint8_t *rxBuffer,
     }
 
     return true;
+}
+
+extern "C" uint32_t AudioStreamService_GetDiscontinuityCount(void)
+{
+    return g_audioStreamServiceState.discontinuityCount;
 }
 
 extern "C" bool AudioStreamService_TryBuildGeneratedPacket(uint8_t *txBuffer,

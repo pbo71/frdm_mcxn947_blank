@@ -61,6 +61,7 @@ bool AudioStreamService_HandleRxPacket(const uint8_t *rxBuffer,
 bool AudioStreamService_TryBuildGeneratedPacket(uint8_t *txBuffer,
                                                 uint32_t txCapacity,
                                                 uint32_t *txLength);
+uint32_t AudioStreamService_GetDiscontinuityCount(void);
 
 #if defined(__cplusplus)
 }

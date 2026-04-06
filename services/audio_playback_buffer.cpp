@@ -28,6 +28,22 @@ constexpr uint32_t kPlaybackStartThresholdBytes = kPlaybackBufferCapacityBytes /
 
 uint8_t g_audioPlaybackBuffer[kPlaybackBufferCapacityBytes]{};
 
+void AudioPlaybackBuffer_ResetState(bool resetMetrics)
+{
+    g_audioPlaybackBufferState.writeIndex = 0U;
+    g_audioPlaybackBufferState.readIndex = 0U;
+    g_audioPlaybackBufferState.fillLevelBytes = 0U;
+
+    if (resetMetrics)
+    {
+        g_audioPlaybackBufferState.minFillLevelBytes = 0U;
+        g_audioPlaybackBufferState.maxFillLevelBytes = 0U;
+        g_audioPlaybackBufferState.droppedBytes = 0U;
+        g_audioPlaybackBufferState.underrunCount = 0U;
+        g_audioPlaybackBufferState.overrunCount = 0U;
+    }
+}
+
 uint32_t AudioPlaybackBuffer_TrimToWholeFrames(uint32_t length)
 {
     if (g_audioPlaybackBufferState.bytesPerFrame == 0U)
@@ -60,14 +76,12 @@ extern "C" void AudioPlaybackBuffer_Init(void)
 
 extern "C" void AudioPlaybackBuffer_Reset(void)
 {
-    g_audioPlaybackBufferState.writeIndex = 0U;
-    g_audioPlaybackBufferState.readIndex = 0U;
-    g_audioPlaybackBufferState.fillLevelBytes = 0U;
-    g_audioPlaybackBufferState.minFillLevelBytes = 0U;
-    g_audioPlaybackBufferState.maxFillLevelBytes = 0U;
-    g_audioPlaybackBufferState.droppedBytes = 0U;
-    g_audioPlaybackBufferState.underrunCount = 0U;
-    g_audioPlaybackBufferState.overrunCount = 0U;
+    AudioPlaybackBuffer_ResetState(true);
+}
+
+extern "C" void AudioPlaybackBuffer_ClearData(void)
+{
+    AudioPlaybackBuffer_ResetState(false);
 }
 
 extern "C" bool AudioPlaybackBuffer_Configure(uint32_t sampleRateHz, uint8_t channelCount, uint8_t bitsPerSample)

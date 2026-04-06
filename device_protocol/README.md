@@ -123,7 +123,7 @@ Response payloads:
 | --- | --- | --- |
 | `GetInfo` | `GetInfo` | `GetInfoResponsePayload { u16 protocolVersion, u16 maxCommandPacketSize, u32 capabilities }` |
 | `SetLed` | `SetLed` | `SetLedResponsePayload { u8 appliedAction, u8 reserved0, u16 reserved1 }` |
-| `GetUsbDebugState` | `GetUsbDebugState` | `GetUsbDebugStateResponsePayload { stage, lastEvent, lastStatus, usbSpeed, oversizedOutboundDropCount, setupBmRequestType, setupBRequest, setupWValue, setupWIndex, setupWLength }` |
+| `GetUsbDebugState` | `GetUsbDebugState` | `GetUsbDebugStateResponsePayload { stage, lastEvent, lastStatus, usbSpeed, oversizedOutboundDropCount, setupBmRequestType, setupBRequest, setupWValue, setupWIndex, setupWLength, playbackFillLevelBytes, playbackMinFillLevelBytes, playbackMaxFillLevelBytes, playbackUnderrunCount, playbackOverrunCount, playbackDroppedBytes, discontinuityCount }` |
 | `Ping` | `Ping` | Same bytes as command payload, echoed unchanged |
 | `StartStream` | `StartStream` | `StartStreamResponsePayload { u32 sampleRateHz, u8 channelCount, u8 bitsPerSample, u8 source, u8 reserved }` |
 | `StopStream` | `StopStream` | `StopStreamResponsePayload { u32 stopReason }` |

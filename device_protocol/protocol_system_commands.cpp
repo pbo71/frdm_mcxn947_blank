@@ -99,6 +99,7 @@ uint32_t HandleGetUsbDebugState(uint16_t sequence, uint8_t *responseBuffer, uint
     payload.playbackUnderrunCount = AudioPlaybackBuffer_GetUnderrunCount();
     payload.playbackOverrunCount = AudioPlaybackBuffer_GetOverrunCount();
     payload.playbackDroppedBytes = AudioPlaybackBuffer_GetDroppedBytes();
+    payload.discontinuityCount = AudioStreamService_GetDiscontinuityCount();
 
     return BuildFrame(FrameType::Response,
                       static_cast<uint8_t>(CommandId::GetUsbDebugState),

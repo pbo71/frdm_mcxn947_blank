@@ -1221,7 +1221,7 @@ internal static class Program
 
     private static string DescribeGetUsbDebugState(ProtocolFrame frame)
     {
-        if (frame.Payload.Length != 64)
+        if (frame.Payload.Length is not (64 or 68))
         {
             return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} payload={Convert.ToHexString(frame.Payload)}";
         }
@@ -1237,8 +1237,11 @@ internal static class Program
         var playbackUnderrunCount = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(52, 4));
         var playbackOverrunCount = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(56, 4));
         var playbackDroppedBytes = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(60, 4));
+        var discontinuityCount = frame.Payload.Length >= 68
+            ? BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(64, 4))
+            : 0U;
 
-        return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} stage=0x{stage:X8} lastEvent=0x{lastEvent:X8} lastStatus=0x{lastStatus:X8} usbSpeed={GetUsbSpeedName(usbSpeed)}({usbSpeed}) oversizedOutboundDrops={oversizedOutboundDropCount} playbackFill={playbackFillLevelBytes} playbackMin={playbackMinFillLevelBytes} playbackMax={playbackMaxFillLevelBytes} underruns={playbackUnderrunCount} overruns={playbackOverrunCount} droppedBytes={playbackDroppedBytes}";
+        return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} stage=0x{stage:X8} lastEvent=0x{lastEvent:X8} lastStatus=0x{lastStatus:X8} usbSpeed={GetUsbSpeedName(usbSpeed)}({usbSpeed}) oversizedOutboundDrops={oversizedOutboundDropCount} playbackFill={playbackFillLevelBytes} playbackMin={playbackMinFillLevelBytes} playbackMax={playbackMaxFillLevelBytes} underruns={playbackUnderrunCount} overruns={playbackOverrunCount} droppedBytes={playbackDroppedBytes} discontinuities={discontinuityCount}";
     }
 
     private static string DescribeStartStream(ProtocolFrame frame)

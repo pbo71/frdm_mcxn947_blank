@@ -10,6 +10,7 @@ extern "C" {
 
 void AudioPlaybackBuffer_Init(void);
 void AudioPlaybackBuffer_Reset(void);
+void AudioPlaybackBuffer_ClearData(void);
 bool AudioPlaybackBuffer_Configure(uint32_t sampleRateHz, uint8_t channelCount, uint8_t bitsPerSample);
 bool AudioPlaybackBuffer_IsConfigured(void);
 uint32_t AudioPlaybackBuffer_GetSampleRateHz(void);
