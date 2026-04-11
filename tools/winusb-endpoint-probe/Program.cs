@@ -17,6 +17,7 @@ internal static class Program
     private const string CodecWriteSmokeRunMode = "codec-write-smoke";
     private const string CodecAnalogSmokeRunMode = "codec-analog-smoke";
     private const string CodecAnalogStepSmokeRunMode = "codec-analog-step-smoke";
+    private const string StreamCodecProbeRunMode = "stream-codec-probe";
     private const uint DigcfPresent = 0x00000002;
     private const uint DigcfDeviceInterface = 0x00000010;
     private const uint GenericRead = 0x80000000;
@@ -180,7 +181,8 @@ internal static class Program
             !string.Equals(runMode, CodecProbeRunMode, StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(runMode, CodecWriteSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(runMode, CodecAnalogSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(runMode, CodecAnalogStepSmokeRunMode, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(runMode, CodecAnalogStepSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, StreamCodecProbeRunMode, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"Unsupported run mode: {runMode}");
         }
@@ -452,6 +454,12 @@ internal static class Program
             return;
         }
 
+        if (string.Equals(runMode, StreamCodecProbeRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunStreamCodecProbeDemo(winUsbHandle, endpoints, maxPacket);
+            return;
+        }
+
         if (endpoints.ContainsKey(AudioOutPipe) && endpoints.ContainsKey(AudioInPipe))
         {
             var startStreamResponse = ExecuteCommand(winUsbHandle,
@@ -695,6 +703,75 @@ internal static class Program
         Console.WriteLine($"Loopback stress StopStream response: {DescribeFrame(stopStreamResponse)}");
         DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Loopback stress post-stop");
         PrintDebugStateSnapshot(winUsbHandle, maxPacket, 203, "Debug state after loopback stress stop");
+    }
+
+    private static void RunStreamCodecProbeDemo(IntPtr winUsbHandle, Dictionary<byte, WinUsbPipeInformation> endpoints, ushort maxPacket)
+    {
+        if (!endpoints.ContainsKey(AudioInPipe))
+        {
+            Console.WriteLine("Skipping stream codec probe: audio IN pipe 0x82 not present.");
+            return;
+        }
+
+        var audioMaxPacket = endpoints[(byte)AudioInPipe].MaximumPacketSize;
+
+        DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Stream codec probe pre-drain");
+        DrainAudioPackets(winUsbHandle, audioMaxPacket, "Stream codec probe pre-drain audio");
+
+        var beforeDigPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 300, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER before StartStream");
+        Console.WriteLine($"CHIP_DIG_POWER before StartStream: 0x{beforeDigPower:X4}");
+
+        var setConfigResponse = ExecuteCommand(winUsbHandle,
+                                               maxPacket,
+                                               301,
+                                               0x07,
+                                               BuildSetGeneratorConfigPayload(1200U,
+                                                                              1200U,
+                                                                              750U,
+                                                                              (ushort)9000,
+                                                                              AudioSourceDeviceGeneratedSine,
+                                                                              NoiseTypeWhite,
+                                                                              AmplitudeEnvelopeTriangle,
+                                                                              DefaultNoiseSeed));
+        ValidateResponseStatus(setConfigResponse, expectedStatus: 0, "SetGeneratorConfig (stream codec probe)");
+        Console.WriteLine($"Stream codec probe config response: {DescribeFrame(setConfigResponse)}");
+
+        var startStreamResponse = ExecuteCommand(winUsbHandle,
+                                                 maxPacket,
+                                                 302,
+                                                 0x05,
+                                                 BuildStartStreamPayload(GeneratedSampleRateHz,
+                                                                         GeneratedChannelCount,
+                                                                         GeneratedContainerBitsPerSample,
+                                                                         AudioSourceDeviceGeneratedSine));
+        ValidateResponseStatus(startStreamResponse, expectedStatus: 0, "StartStream (stream codec probe)");
+        Console.WriteLine($"Stream codec probe StartStream response: {DescribeFrame(startStreamResponse)}");
+
+        var duringDigPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 303, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER during stream");
+        Console.WriteLine($"CHIP_DIG_POWER during stream: 0x{duringDigPower:X4}");
+
+        RunGeneratedAudioDemo(winUsbHandle, audioMaxPacket, AudioSourceDeviceGeneratedSine, "Stream codec probe audio");
+        PrintDebugStateSnapshot(winUsbHandle, maxPacket, 304, "Stream codec probe debug state");
+
+        var stopStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 305, 0x06, Array.Empty<byte>());
+        ValidateResponseStatus(stopStreamResponse, expectedStatus: 0, "StopStream (stream codec probe)");
+        Console.WriteLine($"Stream codec probe StopStream response: {DescribeFrame(stopStreamResponse)}");
+
+        DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Stream codec probe post-stop");
+        DrainAudioPackets(winUsbHandle, audioMaxPacket, "Stream codec probe post-stop audio");
+
+        var afterDigPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 306, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER after StopStream");
+        Console.WriteLine($"CHIP_DIG_POWER after StopStream: 0x{afterDigPower:X4}");
+
+        if (duringDigPower != 0x0021)
+        {
+            throw new InvalidOperationException($"Expected CHIP_DIG_POWER=0x0021 during active stream, got 0x{duringDigPower:X4}.");
+        }
+
+        if (afterDigPower != 0x0000)
+        {
+            throw new InvalidOperationException($"Expected CHIP_DIG_POWER=0x0000 after StopStream, got 0x{afterDigPower:X4}.");
+        }
     }
 
     private static void RunLoopbackBurstStress(IntPtr winUsbHandle, ushort audioMaxPacket)

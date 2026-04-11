@@ -5,6 +5,7 @@
 #include <string.h>
 
 extern "C" {
+#include "services/audio_codec.h"
 #include "services/audio_playback_buffer.h"
 #include "services/control_plane_service.h"
 }
@@ -532,6 +533,11 @@ extern "C" bool AudioStreamService_Start(uint32_t sampleRateHz,
         return false;
     }
 
+    if (AudioCodec_EnablePlaybackDigitalPath() != kStatus_Success)
+    {
+        return false;
+    }
+
     g_audioStreamServiceState.streaming = true;
     g_audioStreamServiceState.nextExpectedSequenceNumber = 0U;
     g_audioStreamServiceState.sampleRateHz = sampleRateHz;
@@ -564,6 +570,7 @@ extern "C" bool AudioStreamService_Stop(uint32_t stopReason)
     }
 
     AudioPlaybackBuffer_ClearData();
+    (void)AudioCodec_DisablePlaybackDigitalPath();
     g_audioStreamServiceState.streaming = false;
     g_audioStreamServiceState.nextExpectedSequenceNumber = 0U;
     g_audioStreamServiceState.source = AUDIO_STREAM_SERVICE_SOURCE_HOST_RX_LOOPBACK;

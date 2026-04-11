@@ -12,6 +12,8 @@ namespace
 {
 constexpr uint8_t kCodecRegisterAddressSize = 2U;
 constexpr uint16_t kExpectedChipId = 0xA011U;
+constexpr uint16_t kCodecBaselineDigPower = 0x0000U;
+constexpr uint16_t kCodecPlaybackDigPower = 0x0021U;
 constexpr uint32_t kCodecInitSettlingDelayUs = 20000U;
 constexpr uint32_t kCodecInitRetryDelayUs = 5000U;
 constexpr uint32_t kCodecInitMaxAttempts = 5U;
@@ -70,6 +72,16 @@ status_t ReadCodecRegister(uint16_t reg, uint16_t *value)
 
     *value = static_cast<uint16_t>((static_cast<uint16_t>(payload[0]) << 8) | payload[1]);
     return kStatus_Success;
+}
+
+status_t WriteCodecRegister(uint16_t reg, uint16_t value)
+{
+    uint8_t payload[2] = {
+        static_cast<uint8_t>(value >> 8),
+        static_cast<uint8_t>(value & 0xFFU),
+    };
+
+    return CodecI2cTransfer(reg, kLPI2C_Write, payload, sizeof(payload));
 }
 
 status_t g_audioCodecInitStatus = kStatus_Fail;
@@ -132,4 +144,28 @@ extern "C" uint32_t AudioCodec_GetInitAttemptCount(void)
 extern "C" uint32_t AudioCodec_GetLastInitStep(void)
 {
     return g_audioCodecLastInitStep;
+}
+
+extern "C" status_t AudioCodec_EnablePlaybackDigitalPath(void)
+{
+    status_t status = AudioCodec_Init();
+
+    if (status != kStatus_Success)
+    {
+        return status;
+    }
+
+    return WriteCodecRegister(CHIP_DIG_POWER, kCodecPlaybackDigPower);
+}
+
+extern "C" status_t AudioCodec_DisablePlaybackDigitalPath(void)
+{
+    status_t status = AudioCodec_Init();
+
+    if (status != kStatus_Success)
+    {
+        return status;
+    }
+
+    return WriteCodecRegister(CHIP_DIG_POWER, kCodecBaselineDigPower);
 }

@@ -11,6 +11,8 @@ status_t AudioCodec_Init(void);
 status_t AudioCodec_GetInitStatus(void);
 uint32_t AudioCodec_GetInitAttemptCount(void);
 uint32_t AudioCodec_GetLastInitStep(void);
+status_t AudioCodec_EnablePlaybackDigitalPath(void);
+status_t AudioCodec_DisablePlaybackDigitalPath(void);
 
 #ifdef __cplusplus
 }
