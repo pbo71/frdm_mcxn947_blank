@@ -13,6 +13,10 @@ internal static class Program
     private const string DefaultRunMode = "full";
     private const string GeneratedSmokeRunMode = "generated-smoke";
     private const string LoopbackStressRunMode = "loopback-stress";
+    private const string CodecProbeRunMode = "codec-probe";
+    private const string CodecWriteSmokeRunMode = "codec-write-smoke";
+    private const string CodecAnalogSmokeRunMode = "codec-analog-smoke";
+    private const string CodecAnalogStepSmokeRunMode = "codec-analog-step-smoke";
     private const uint DigcfPresent = 0x00000002;
     private const uint DigcfDeviceInterface = 0x00000010;
     private const uint GenericRead = 0x80000000;
@@ -58,6 +62,18 @@ internal static class Program
     private const byte GeneratedChannelCount = 2;
     private const byte GeneratedContainerBitsPerSample = 32;
     private const int GeneratedValidBitsPerSample = 24;
+    private const byte Sgtl5000DeviceAddress = 0x0A;
+    private const byte Sgtl5000RegisterAddressSize = 2;
+    private const ushort Sgtl5000ChipIdRegister = 0x0000;
+    private const ushort Sgtl5000DigPowerRegister = 0x0002;
+    private const ushort Sgtl5000ClkCtrlRegister = 0x0004;
+    private const ushort Sgtl5000I2sCtrlRegister = 0x0006;
+    private const ushort Sgtl5000SssCtrlRegister = 0x000A;
+    private const ushort Sgtl5000AdcDacCtrlRegister = 0x000E;
+    private const ushort Sgtl5000AnaCtrlRegister = 0x0024;
+    private const ushort Sgtl5000AnaPowerRegister = 0x0030;
+    private const ushort Sgtl5000ExpectedAnaPowerValue = 0x7060;
+    private const byte Sgtl5000ChipIdLength = 2;
     private const int LoopbackStressBurstCount = 18;
     private const int LoopbackStressPacketsPerBurst = 8;
     private const int LoopbackStressFramesPerPacket = 32;
@@ -160,7 +176,11 @@ internal static class Program
 
         if (!string.Equals(runMode, DefaultRunMode, StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(runMode, GeneratedSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(runMode, LoopbackStressRunMode, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(runMode, LoopbackStressRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, CodecProbeRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, CodecWriteSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, CodecAnalogSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, CodecAnalogStepSmokeRunMode, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"Unsupported run mode: {runMode}");
         }
@@ -405,6 +425,30 @@ internal static class Program
         if (string.Equals(runMode, LoopbackStressRunMode, StringComparison.OrdinalIgnoreCase))
         {
             RunLoopbackStressDemo(winUsbHandle, endpoints, maxPacket);
+            return;
+        }
+
+        if (string.Equals(runMode, CodecProbeRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunCodecProbeDemo(winUsbHandle, maxPacket);
+            return;
+        }
+
+        if (string.Equals(runMode, CodecWriteSmokeRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunCodecWriteSmokeDemo(winUsbHandle, maxPacket);
+            return;
+        }
+
+        if (string.Equals(runMode, CodecAnalogSmokeRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunCodecAnalogSmokeDemo(winUsbHandle, maxPacket);
+            return;
+        }
+
+        if (string.Equals(runMode, CodecAnalogStepSmokeRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunCodecAnalogStepSmokeDemo(winUsbHandle, maxPacket);
             return;
         }
 
@@ -773,6 +817,35 @@ internal static class Program
         return payload;
     }
 
+    private static byte[] BuildI2cReadRegisterPayload(byte deviceAddress,
+                                                      byte registerAddressSize,
+                                                      byte readLength,
+                                                      uint registerAddress)
+    {
+        var payload = new byte[8];
+        payload[0] = deviceAddress;
+        payload[1] = registerAddressSize;
+        payload[2] = readLength;
+        payload[3] = 0;
+        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(4, 4), registerAddress);
+        return payload;
+    }
+
+    private static byte[] BuildI2cWriteRegisterPayload(byte deviceAddress,
+                                                       byte registerAddressSize,
+                                                       uint registerAddress,
+                                                       ReadOnlySpan<byte> data)
+    {
+        var payload = new byte[8 + data.Length];
+        payload[0] = deviceAddress;
+        payload[1] = registerAddressSize;
+        payload[2] = checked((byte)data.Length);
+        payload[3] = 0;
+        BinaryPrimitives.WriteUInt32LittleEndian(payload.AsSpan(4, 4), registerAddress);
+        data.CopyTo(payload.AsSpan(8));
+        return payload;
+    }
+
     private static byte[] BuildAudioPacket(uint sequenceNumber,
                                            uint timestamp,
                                            uint sampleRateHz,
@@ -877,6 +950,216 @@ internal static class Program
         }
 
         Console.WriteLine("Format mismatch test: no audio echo received before timeout, as expected.");
+    }
+
+    private static void RunCodecProbeDemo(IntPtr winUsbHandle, ushort maxPacket)
+    {
+        Console.WriteLine("Running SGTL5000 codec probe over control-plane I2C...");
+
+        var chipId = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 5, Sgtl5000ChipIdRegister, "CHIP_ID");
+        Console.WriteLine($"SGTL5000 CHIP_ID register value: 0x{chipId:X4}");
+
+        Console.WriteLine("SGTL5000 baseline register snapshot:");
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 6, "CHIP_DIG_POWER", Sgtl5000DigPowerRegister, expectedValue: 0x0000);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 7, "CHIP_CLK_CTRL", Sgtl5000ClkCtrlRegister, expectedValue: 0x0008);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 8, "CHIP_I2S_CTRL", Sgtl5000I2sCtrlRegister, expectedValue: 0x0010);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 9, "CHIP_SSS_CTRL", Sgtl5000SssCtrlRegister, expectedValue: 0x0010);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 10, "CHIP_ADCDAC_CTRL", Sgtl5000AdcDacCtrlRegister, expectedValue: 0x323C);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 11, "CHIP_ANA_CTRL", Sgtl5000AnaCtrlRegister, expectedValue: 0x0111);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 12, "CHIP_ANA_POWER", Sgtl5000AnaPowerRegister, expectedValue: Sgtl5000ExpectedAnaPowerValue);
+    }
+
+    private static void RunCodecWriteSmokeDemo(IntPtr winUsbHandle, ushort maxPacket)
+    {
+        Console.WriteLine("Running SGTL5000 codec write smoke test over control-plane I2C...");
+
+        var chipId = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 5, Sgtl5000ChipIdRegister, "CHIP_ID");
+        Console.WriteLine($"SGTL5000 CHIP_ID register value: 0x{chipId:X4}");
+
+        var originalDigPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 6, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER");
+        Console.WriteLine($"Original CHIP_DIG_POWER: 0x{originalDigPower:X4}");
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 7, Sgtl5000DigPowerRegister, 0x0021, "CHIP_DIG_POWER enable DAC+I2S_IN");
+        var updatedDigPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 8, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER");
+        Console.WriteLine($"Updated CHIP_DIG_POWER: 0x{updatedDigPower:X4}");
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 9, Sgtl5000DigPowerRegister, originalDigPower, "CHIP_DIG_POWER restore baseline");
+        var restoredDigPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 10, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER");
+        Console.WriteLine($"Restored CHIP_DIG_POWER: 0x{restoredDigPower:X4}");
+
+        if (updatedDigPower != 0x0021)
+        {
+            throw new InvalidOperationException($"CHIP_DIG_POWER write did not stick. Expected 0x0021, got 0x{updatedDigPower:X4}.");
+        }
+
+        if (restoredDigPower != originalDigPower)
+        {
+            throw new InvalidOperationException($"CHIP_DIG_POWER restore did not stick. Expected 0x{originalDigPower:X4}, got 0x{restoredDigPower:X4}.");
+        }
+    }
+
+    private static void RunCodecAnalogSmokeDemo(IntPtr winUsbHandle, ushort maxPacket)
+    {
+        Console.WriteLine("Running SGTL5000 codec analog smoke test over control-plane I2C...");
+
+        var chipId = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 5, Sgtl5000ChipIdRegister, "CHIP_ID");
+        Console.WriteLine($"SGTL5000 CHIP_ID register value: 0x{chipId:X4}");
+
+        var originalAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 6, Sgtl5000AnaPowerRegister, "CHIP_ANA_POWER");
+        Console.WriteLine($"Original CHIP_ANA_POWER: 0x{originalAnaPower:X4}");
+
+        const ushort targetAnaPower = Sgtl5000ExpectedAnaPowerValue;
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 7, Sgtl5000AnaPowerRegister, targetAnaPower, "CHIP_ANA_POWER staged analog enable");
+
+        var updatedAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 8, Sgtl5000AnaPowerRegister, "CHIP_ANA_POWER");
+        Console.WriteLine($"Updated CHIP_ANA_POWER: 0x{updatedAnaPower:X4}");
+
+        var chipIdAfterAnalogWrite = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 9, Sgtl5000ChipIdRegister, "CHIP_ID after analog write");
+        Console.WriteLine($"CHIP_ID after analog write: 0x{chipIdAfterAnalogWrite:X4}");
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 10, Sgtl5000AnaPowerRegister, originalAnaPower, "CHIP_ANA_POWER restore baseline");
+
+        var restoredAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 11, Sgtl5000AnaPowerRegister, "CHIP_ANA_POWER");
+        Console.WriteLine($"Restored CHIP_ANA_POWER: 0x{restoredAnaPower:X4}");
+
+        var chipIdAfterRestore = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 12, Sgtl5000ChipIdRegister, "CHIP_ID after restore");
+        Console.WriteLine($"CHIP_ID after restore: 0x{chipIdAfterRestore:X4}");
+
+        if (updatedAnaPower != targetAnaPower)
+        {
+            throw new InvalidOperationException($"CHIP_ANA_POWER write did not stick. Expected 0x{targetAnaPower:X4}, got 0x{updatedAnaPower:X4}.");
+        }
+
+        if (restoredAnaPower != originalAnaPower)
+        {
+            throw new InvalidOperationException($"CHIP_ANA_POWER restore did not stick. Expected 0x{originalAnaPower:X4}, got 0x{restoredAnaPower:X4}.");
+        }
+    }
+
+    private static void RunCodecAnalogStepSmokeDemo(IntPtr winUsbHandle, ushort maxPacket)
+    {
+        Console.WriteLine("Running SGTL5000 codec analog step smoke test over control-plane I2C...");
+
+        var chipId = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 5, Sgtl5000ChipIdRegister, "CHIP_ID");
+        Console.WriteLine($"SGTL5000 CHIP_ID register value: 0x{chipId:X4}");
+
+        var baselineAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 6, Sgtl5000AnaPowerRegister, "CHIP_ANA_POWER baseline");
+        Console.WriteLine($"Baseline CHIP_ANA_POWER: 0x{baselineAnaPower:X4}");
+
+        var tests = new (string Label, ushort TargetValue)[]
+        {
+            ("set VAG powerup", (ushort)(baselineAnaPower | 0x0080)),
+            ("set headphone powerup", (ushort)(baselineAnaPower | 0x0010)),
+            ("set DAC powerup", (ushort)(baselineAnaPower | 0x0008)),
+            ("set ADC powerup", (ushort)(baselineAnaPower | 0x0002)),
+            ("set lineout powerup", (ushort)(baselineAnaPower | 0x0001)),
+            ("set capless headphone powerup", (ushort)(baselineAnaPower | 0x0004)),
+            ("set LINREG_D powerup", (ushort)(baselineAnaPower | 0x0200)),
+            ("set charge pump powerup", (ushort)(baselineAnaPower | 0x0800)),
+            ("clear startup powerup", (ushort)(baselineAnaPower & 0xEFFF)),
+        };
+
+        ushort sequence = 7;
+
+        foreach (var test in tests)
+        {
+            RunCodecAnalogStep(winUsbHandle, maxPacket, ref sequence, baselineAnaPower, test.TargetValue, test.Label);
+        }
+    }
+
+    private static void RunCodecAnalogStep(IntPtr winUsbHandle,
+                                           ushort maxPacket,
+                                           ref ushort sequence,
+                                           ushort baselineAnaPower,
+                                           ushort targetAnaPower,
+                                           string label)
+    {
+        Console.WriteLine($"Testing analog step: {label} target=0x{targetAnaPower:X4}");
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, targetAnaPower, $"CHIP_ANA_POWER {label}");
+
+        var observedAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER after {label}");
+        Console.WriteLine($"Observed CHIP_ANA_POWER after {label}: 0x{observedAnaPower:X4}");
+
+        var chipIdAfterStep = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000ChipIdRegister, $"CHIP_ID after {label}");
+        Console.WriteLine($"CHIP_ID after {label}: 0x{chipIdAfterStep:X4}");
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, baselineAnaPower, $"CHIP_ANA_POWER restore after {label}");
+
+        var restoredAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER restored after {label}");
+        Console.WriteLine($"Restored CHIP_ANA_POWER after {label}: 0x{restoredAnaPower:X4}");
+
+        if (observedAnaPower != targetAnaPower)
+        {
+            throw new InvalidOperationException($"Analog step '{label}' did not stick. Expected 0x{targetAnaPower:X4}, got 0x{observedAnaPower:X4}.");
+        }
+
+        if (restoredAnaPower != baselineAnaPower)
+        {
+            throw new InvalidOperationException($"Analog step '{label}' did not restore baseline. Expected 0x{baselineAnaPower:X4}, got 0x{restoredAnaPower:X4}.");
+        }
+    }
+
+    private static ushort ReadCodecRegister16(IntPtr winUsbHandle,
+                                              ushort maxPacket,
+                                              ushort sequence,
+                                              ushort registerAddress,
+                                              string registerName)
+    {
+        var response = ExecuteCommand(winUsbHandle,
+                                      maxPacket,
+                                      sequence,
+                                      0x09,
+                                      BuildI2cReadRegisterPayload(Sgtl5000DeviceAddress,
+                                                                  Sgtl5000RegisterAddressSize,
+                                                                  readLength: 2,
+                                                                  registerAddress));
+
+        Console.WriteLine($"{registerName} response: {DescribeFrame(response)}");
+
+        ValidateResponseStatus(response, expectedStatus: 0, $"I2cReadRegister({registerName})");
+
+        if (response.Payload.Length < 10)
+        {
+            throw new InvalidOperationException($"{registerName} response was too short: {Convert.ToHexString(response.Payload)}");
+        }
+
+        return BinaryPrimitives.ReadUInt16BigEndian(response.Payload.AsSpan(8, 2));
+    }
+
+    private static void WriteCodecRegister16(IntPtr winUsbHandle,
+                                             ushort maxPacket,
+                                             ushort sequence,
+                                             ushort registerAddress,
+                                             ushort value,
+                                             string operationName)
+    {
+        Span<byte> data = stackalloc byte[2];
+        BinaryPrimitives.WriteUInt16BigEndian(data, value);
+
+        var response = ExecuteCommand(winUsbHandle,
+                                      maxPacket,
+                                      sequence,
+                                      0x08,
+                                      BuildI2cWriteRegisterPayload(Sgtl5000DeviceAddress,
+                                                                   Sgtl5000RegisterAddressSize,
+                                                                   registerAddress,
+                                                                   data));
+
+        Console.WriteLine($"{operationName} response: {DescribeFrame(response)}");
+        ValidateResponseStatus(response, expectedStatus: 0, $"I2cWriteRegister({operationName})");
+    }
+
+    private static void DumpCodecRegister16(IntPtr winUsbHandle,
+                                            ushort maxPacket,
+                                            ushort sequence,
+                                            string registerName,
+                                            ushort registerAddress,
+                                            ushort expectedValue)
+    {
+        var value = ReadCodecRegister16(winUsbHandle, maxPacket, sequence, registerAddress, registerName);
+        var matches = value == expectedValue ? "match" : "MISMATCH";
+        Console.WriteLine($"  {registerName} (0x{registerAddress:X4}) = 0x{value:X4} expected=0x{expectedValue:X4} [{matches}]");
     }
 
     private static void RunGeneratedAudioDemo(IntPtr winUsbHandle, ushort audioMaxPacket, byte source, string label)
@@ -1187,6 +1470,8 @@ internal static class Program
             0x05 => DescribeStartStream(frame),
             0x06 => DescribeStopStream(frame),
             0x07 => DescribeSetGeneratorConfig(frame),
+            0x08 => DescribeI2cWriteRegister(frame),
+            0x09 => DescribeI2cReadRegister(frame),
             0x04 => $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} payload=\"{Encoding.ASCII.GetString(frame.Payload)}\"",
             0x02 => DescribeSetLed(frame),
             0x03 => DescribeGetUsbDebugState(frame),
@@ -1256,6 +1541,32 @@ internal static class Program
         var bitsPerSample = frame.Payload[5];
         var source = frame.Payload[6];
         return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} sampleRate={sampleRate}Hz channels={channels} bitsPerSample={bitsPerSample} source={GetAudioSourceName(source)}({source})";
+    }
+
+    private static string DescribeI2cReadRegister(ProtocolFrame frame)
+    {
+        if (frame.Payload.Length < 8)
+        {
+            return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} payload={Convert.ToHexString(frame.Payload)}";
+        }
+
+        var driverStatus = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(0, 4));
+        var readLength = frame.Payload[4];
+        var dataLength = Math.Min(readLength, Math.Max(0, frame.Payload.Length - 8));
+        var data = Convert.ToHexString(frame.Payload.AsSpan(8, dataLength));
+
+        return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} driverStatus=0x{driverStatus:X8} readLength={readLength} data={data}";
+    }
+
+    private static string DescribeI2cWriteRegister(ProtocolFrame frame)
+    {
+        if (frame.Payload.Length < 4)
+        {
+            return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} payload={Convert.ToHexString(frame.Payload)}";
+        }
+
+        var driverStatus = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(0, 4));
+        return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} driverStatus=0x{driverStatus:X8}";
     }
 
     private static string DescribeStopStream(ProtocolFrame frame)
@@ -1499,6 +1810,8 @@ internal static class Program
             0x05 => "StartStream",
             0x06 => "StopStream",
             0x07 => "SetGeneratorConfig",
+            0x08 => "I2cWriteRegister",
+            0x09 => "I2cReadRegister",
             _ => "UnknownOpcode",
         };
     }

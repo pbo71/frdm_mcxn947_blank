@@ -19,21 +19,23 @@ mcux_add_include(
 )
 
 mcux_add_source(
-    SOURCES frdmmcxn947/clock_config.c
-            frdmmcxn947/clock_config.h
+    SOURCES ../board/clock_config.c
+            ../board/clock_config.h
 )
 
 mcux_add_include(
-    INCLUDES frdmmcxn947
+    INCLUDES ../board
 )
 
 mcux_add_source(
-    SOURCES audio_stream_demo_app/pin_mux.c
-            audio_stream_demo_app/pin_mux.h
+    SOURCES ../board/peripherals.c
+            ../board/peripherals.h
+            ../board/pin_mux.c
+            ../board/pin_mux.h
 )
 
 mcux_add_include(
-    INCLUDES audio_stream_demo_app
+    INCLUDES ../board
 )
 
 mcux_add_source(

@@ -12,6 +12,7 @@ extern "C" {
 #include "task.h"
 #include "alive_service.h"
 #include "audio_tx_service.h"
+#include "services/audio_codec.h"
 #include "services/audio_playback_buffer.h"
 #include "services/audio_stream_service.h"
 #include "services/control_plane_service.h"
@@ -23,6 +24,7 @@ void USB_DeviceClockInit(void);
 int main(void)
 {
     BOARD_InitHardware();
+    (void)AudioCodec_Init();
     AudioPlaybackBuffer_Init();
     AudioStreamService_Init();
     ControlPlaneService_Init();

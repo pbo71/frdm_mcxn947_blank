@@ -23,6 +23,8 @@ mcux_add_source(
             audio_tx_service.cpp
             audio_tx_service.h
             freertos_diagnostics.cpp
+            services/audio_codec.cpp
+            services/audio_codec.h
             services/audio_playback_buffer.cpp
             services/audio_playback_buffer.h
             services/audio_stream_service.cpp
@@ -44,11 +46,6 @@ mcux_add_source(
 )
 
 mcux_add_source(
-    SOURCES audio_stream_demo_app/peripherals.c
-            audio_stream_demo_app/peripherals.h
-)
-
-mcux_add_source(
     SOURCES usb_vendor_bulk.c
             usb_vendor_bulk.h
             usb_vendor_bulk_descriptor.c
@@ -67,11 +64,16 @@ mcux_add_include(
 )
 
 target_sources(${MCUX_SDK_PROJECT_NAME} PRIVATE
+    ${SdkRootDirPath}/drivers/sai/fsl_sai.c
     ${SdkRootDirPath}/drivers/lpflexcomm/lpi2c/fsl_lpi2c.c
 )
 
 target_include_directories(${MCUX_SDK_PROJECT_NAME} PRIVATE
+    ${SdkRootDirPath}/drivers/sai
     ${SdkRootDirPath}/drivers/lpflexcomm/lpi2c
+    ${SdkRootDirPath}/components/codec/sgtl5000
+    ${SdkRootDirPath}/components/codec/i2c
+    ${SdkRootDirPath}/components/i2c
 )
 
 mcux_convert_binary(BINARY ${APPLICATION_BINARY_DIR}/${MCUX_SDK_PROJECT_NAME}.bin)

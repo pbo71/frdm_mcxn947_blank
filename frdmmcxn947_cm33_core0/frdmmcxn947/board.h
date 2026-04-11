@@ -8,7 +8,7 @@
 #ifndef _BOARD_H_
 #define _BOARD_H_
 
-#include "clock_config.h"
+#include "board/clock_config.h"
 #include "fsl_gpio.h"
 /*******************************************************************************
  * Definitions
