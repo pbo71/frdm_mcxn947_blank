@@ -53,6 +53,22 @@ constexpr float kGeneratedAngleScale = 6.28318530717958647692F / kGeneratedPhase
 constexpr uint16_t kGeneratedDefaultAmplitude = 12000U;
 constexpr int32_t kGeneratedMaxSample24 = 0x7FFFFF;
 constexpr int32_t kGeneratedMinSample24 = -0x800000;
+constexpr uint32_t kAudioStreamFaultCodecEnable = 0xA001U;
+constexpr uint32_t kAudioStreamFaultCodecRecover = 0xA002U;
+
+uint32_t AudioStreamService_PackCodecEnableFaultDetail(status_t codecStatus)
+{
+    const uint32_t codecStep = AudioCodec_GetLastPlaybackEnableStep() & 0xFFFFU;
+    const uint32_t codecDriverStatus = static_cast<uint32_t>(static_cast<uint16_t>(codecStatus));
+    return (codecStep << 16) | codecDriverStatus;
+}
+
+uint32_t AudioStreamService_PackCodecRecoverFaultDetail(status_t recoverStatus)
+{
+    const uint32_t attempts = AudioCodec_GetLastRecoveryAttemptCount() & 0xFFFFU;
+    const uint32_t codecDriverStatus = static_cast<uint32_t>(static_cast<uint16_t>(recoverStatus));
+    return (attempts << 16) | codecDriverStatus;
+}
 
 bool AudioStreamService_IsSourceValid(uint8_t source)
 {
@@ -533,9 +549,11 @@ extern "C" bool AudioStreamService_Start(uint32_t sampleRateHz,
         return false;
     }
 
-    if (AudioCodec_EnablePlaybackDigitalPath() != kStatus_Success)
+    const status_t codecStatus = AudioCodec_EnablePlaybackDigitalPath();
+    if (codecStatus != kStatus_Success)
     {
-        return false;
+        ControlPlaneService_NotifyFault(kAudioStreamFaultCodecEnable,
+                                        AudioStreamService_PackCodecEnableFaultDetail(codecStatus));
     }
 
     g_audioStreamServiceState.streaming = true;
@@ -570,7 +588,12 @@ extern "C" bool AudioStreamService_Stop(uint32_t stopReason)
     }
 
     AudioPlaybackBuffer_ClearData();
-    (void)AudioCodec_DisablePlaybackDigitalPath();
+    const status_t codecRecoverStatus = AudioCodec_DisablePlaybackDigitalPath();
+    if (codecRecoverStatus != kStatus_Success)
+    {
+        ControlPlaneService_NotifyFault(kAudioStreamFaultCodecRecover,
+                                        AudioStreamService_PackCodecRecoverFaultDetail(codecRecoverStatus));
+    }
     g_audioStreamServiceState.streaming = false;
     g_audioStreamServiceState.nextExpectedSequenceNumber = 0U;
     g_audioStreamServiceState.source = AUDIO_STREAM_SERVICE_SOURCE_HOST_RX_LOOPBACK;
@@ -778,6 +801,12 @@ extern "C" bool AudioStreamService_TryBuildGeneratedPacket(uint8_t *txBuffer,
 
     g_audioStreamServiceState.generatedFirstPacketPending = false;
     g_audioStreamServiceState.nextExpectedSequenceNumber += 1U;
+
+    if (AudioPlaybackBuffer_IsConfigured())
+    {
+        (void)AudioPlaybackBuffer_Write(payloadBuffer, payloadBytes);
+    }
+
     *txLength = sizeof(audio_stream_header_t) + payloadBytes;
 
     return true;

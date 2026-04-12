@@ -1,5 +1,7 @@
 extern "C" {
 #include "FreeRTOS.h"
+#include "board/peripherals.h"
+#include "fsl_sai.h"
 #include "task.h"
 #include "services/audio_playback_buffer.h"
 #include "services/control_plane_service.h"
@@ -11,29 +13,46 @@ extern "C" {
 namespace {
 
 constexpr uint32_t kAudioTxTaskStackSize = configMINIMAL_STACK_SIZE + 192U;
-constexpr UBaseType_t kAudioTxTaskPriority = tskIDLE_PRIORITY + 2U;
-constexpr TickType_t kAudioTxTaskPeriodTicks = pdMS_TO_TICKS(2U);
-constexpr uint32_t kAudioTxTaskPeriodMs = 2U;
-constexpr uint32_t kAudioDrainRateScalePermille = 1000U;
-constexpr uint32_t kAudioDrainScratchBufferBytes = 1024U;
+constexpr UBaseType_t kAudioTxTaskPriority = tskIDLE_PRIORITY + 1U;
+constexpr TickType_t kAudioTxIdleDelayTicks = pdMS_TO_TICKS(1U);
+constexpr uint32_t kAudioDrainScratchBufferBytes = 256U;
 
 uint8_t g_audioDrainScratchBuffer[kAudioDrainScratchBufferBytes]{};
 
-void AudioTxService_DrainPlaybackBuffer(void)
+void AudioTxService_StopSaiTx(void)
+{
+    SAI_TxEnable(SAI1_PERIPHERAL, false);
+    SAI_TxSoftwareReset(SAI1_PERIPHERAL, kSAI_ResetTypeFIFO);
+}
+
+void AudioTxService_StartSaiTx(void)
+{
+    SAI_TxSoftwareReset(SAI1_PERIPHERAL, kSAI_ResetTypeFIFO);
+    SAI_TxSetChannelFIFOMask(SAI1_PERIPHERAL, 1U);
+    SAI_TxSetFIFOErrorContinue(SAI1_PERIPHERAL, true);
+    SAI_TxEnable(SAI1_PERIPHERAL, true);
+}
+
+bool AudioTxService_DrainPlaybackBuffer(void)
 {
     static bool playbackDrainActive = false;
-    static uint32_t byteAccumulator = 0U;
+    static bool saiTxActive = false;
 
     if (ControlPlaneService_GetState() != kControlPlaneServiceStateStreaming)
     {
+        if (saiTxActive)
+        {
+            AudioTxService_StopSaiTx();
+            saiTxActive = false;
+        }
+
         playbackDrainActive = false;
-        byteAccumulator = 0U;
-        return;
+        return false;
     }
 
     if (!AudioPlaybackBuffer_IsConfigured())
     {
-        return;
+        return false;
     }
 
     if (!playbackDrainActive)
@@ -41,30 +60,39 @@ void AudioTxService_DrainPlaybackBuffer(void)
         playbackDrainActive = AudioPlaybackBuffer_StartThresholdReached();
         if (!playbackDrainActive)
         {
-            return;
+            return false;
+        }
+
+        if (!saiTxActive)
+        {
+            AudioTxService_StartSaiTx();
+            saiTxActive = true;
         }
     }
 
     const uint32_t bytesPerFrame = AudioPlaybackBuffer_GetBytesPerFrame();
-    const uint32_t sampleRateHz = AudioPlaybackBuffer_GetSampleRateHz();
-    if ((bytesPerFrame == 0U) || (sampleRateHz == 0U))
+    if (bytesPerFrame == 0U)
     {
-        return;
+        return false;
     }
 
-    byteAccumulator += (sampleRateHz * bytesPerFrame * kAudioTxTaskPeriodMs * kAudioDrainRateScalePermille);
-
-    uint32_t bytesToConsume = byteAccumulator / 1000000U;
-    byteAccumulator %= 1000000U;
+    uint32_t bytesToConsume = AudioPlaybackBuffer_FillLevelBytes();
+    bytesToConsume = bytesToConsume > kAudioDrainScratchBufferBytes ? kAudioDrainScratchBufferBytes : bytesToConsume;
+    bytesToConsume -= (bytesToConsume % bytesPerFrame);
 
     if (bytesToConsume == 0U)
     {
-        return;
+        return false;
     }
 
-    const uint32_t chunkSize = bytesToConsume > kAudioDrainScratchBufferBytes ? kAudioDrainScratchBufferBytes : bytesToConsume;
-    const uint32_t consumedBytes = AudioPlaybackBuffer_Read(g_audioDrainScratchBuffer, chunkSize);
-    (void)consumedBytes;
+    const uint32_t consumedBytes = AudioPlaybackBuffer_Read(g_audioDrainScratchBuffer, bytesToConsume);
+    if (consumedBytes == 0U)
+    {
+        return false;
+    }
+
+    SAI_WriteBlocking(SAI1_PERIPHERAL, 0U, SAI1_TX_WORD_WIDTH, g_audioDrainScratchBuffer, consumedBytes);
+    return true;
 }
 
 void AudioTxServiceTask(void *taskParameter)
@@ -74,8 +102,10 @@ void AudioTxServiceTask(void *taskParameter)
     for (;;)
     {
         USB_VendorBulkNotifyAudioTxPending();
-        AudioTxService_DrainPlaybackBuffer();
-        vTaskDelay(kAudioTxTaskPeriodTicks);
+        if (!AudioTxService_DrainPlaybackBuffer())
+        {
+            vTaskDelay(kAudioTxIdleDelayTicks);
+        }
     }
 }
 

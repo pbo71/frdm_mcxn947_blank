@@ -9,7 +9,7 @@ extern "C" {
 namespace {
 
 constexpr uint32_t kAliveTaskStackSize = configMINIMAL_STACK_SIZE + 128U;
-constexpr UBaseType_t kAliveTaskPriority = tskIDLE_PRIORITY + 1U;
+constexpr UBaseType_t kAliveTaskPriority = tskIDLE_PRIORITY + 3U;
 
 void AliveServiceTask(void *taskParameter)
 {

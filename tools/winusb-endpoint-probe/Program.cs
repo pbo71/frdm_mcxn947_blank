@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
@@ -17,7 +18,10 @@ internal static class Program
     private const string CodecWriteSmokeRunMode = "codec-write-smoke";
     private const string CodecAnalogSmokeRunMode = "codec-analog-smoke";
     private const string CodecAnalogStepSmokeRunMode = "codec-analog-step-smoke";
+    private const string CodecPlaybackSequenceRunMode = "codec-playback-sequence-smoke";
     private const string StreamCodecProbeRunMode = "stream-codec-probe";
+    private const string PlaybackAudibleRunMode = "playback-audible";
+    private const uint CodecEnableFaultCode = 0xA001;
     private const uint DigcfPresent = 0x00000002;
     private const uint DigcfDeviceInterface = 0x00000010;
     private const uint GenericRead = 0x80000000;
@@ -72,8 +76,17 @@ internal static class Program
     private const ushort Sgtl5000SssCtrlRegister = 0x000A;
     private const ushort Sgtl5000AdcDacCtrlRegister = 0x000E;
     private const ushort Sgtl5000AnaCtrlRegister = 0x0024;
+    private const ushort Sgtl5000RefCtrlRegister = 0x0028;
+    private const ushort Sgtl5000AnaHpCtrlRegister = 0x0022;
     private const ushort Sgtl5000AnaPowerRegister = 0x0030;
+    private const ushort Sgtl5000AnaStatusRegister = 0x0036;
+    private const ushort Sgtl5000ShortCtrlRegister = 0x003C;
+    private const ushort Sgtl5000DacVolRegister = 0x0010;
     private const ushort Sgtl5000ExpectedAnaPowerValue = 0x7060;
+    private const ushort Sgtl5000ExpectedAdcDacCtrlBaseline = 0x323C;
+    private const ushort Sgtl5000ExpectedAdcDacCtrlPlayback = 0x3230;
+    private const ushort Sgtl5000ExpectedAnaCtrlBaseline = 0x0111;
+    private const ushort Sgtl5000ExpectedAnaCtrlPlayback = 0x0001;
     private const byte Sgtl5000ChipIdLength = 2;
     private const int LoopbackStressBurstCount = 18;
     private const int LoopbackStressPacketsPerBurst = 8;
@@ -81,6 +94,9 @@ internal static class Program
     private const int LoopbackStressShortPauseMs = 2;
     private const int LoopbackStressLongPauseMs = 12;
     private const int LoopbackStressDebugSnapshotPeriod = 6;
+    private const int PlaybackAudiblePacketCount = 3000;
+    private const int PlaybackAudibleFramesPerPacket = 60;
+    private const int PlaybackAudibleSnapshotPacketIndex = 200;
 
     private static readonly Guid DefaultInterfaceGuid = new("D5959801-45C1-49DB-9053-89B5365C2800");
 
@@ -182,7 +198,9 @@ internal static class Program
             !string.Equals(runMode, CodecWriteSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(runMode, CodecAnalogSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(runMode, CodecAnalogStepSmokeRunMode, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(runMode, StreamCodecProbeRunMode, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(runMode, CodecPlaybackSequenceRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, StreamCodecProbeRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, PlaybackAudibleRunMode, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"Unsupported run mode: {runMode}");
         }
@@ -415,9 +433,6 @@ internal static class Program
         var pingResponse = ExecuteCommand(winUsbHandle, maxPacket, 3, 0x04, pingPayload);
         Console.WriteLine($"Ping response: {DescribeFrame(pingResponse)}");
 
-        var ledResponse = ExecuteCommand(winUsbHandle, maxPacket, 4, 0x02, new byte[] { 0x02 });
-        Console.WriteLine($"SetLed response: {DescribeFrame(ledResponse)}");
-
         if (string.Equals(runMode, GeneratedSmokeRunMode, StringComparison.OrdinalIgnoreCase))
         {
             RunGeneratedSmokeDemo(winUsbHandle, endpoints, maxPacket);
@@ -454,9 +469,21 @@ internal static class Program
             return;
         }
 
+        if (string.Equals(runMode, CodecPlaybackSequenceRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunCodecPlaybackSequenceSmokeDemo(winUsbHandle, maxPacket);
+            return;
+        }
+
         if (string.Equals(runMode, StreamCodecProbeRunMode, StringComparison.OrdinalIgnoreCase))
         {
             RunStreamCodecProbeDemo(winUsbHandle, endpoints, maxPacket);
+            return;
+        }
+
+        if (string.Equals(runMode, PlaybackAudibleRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunPlaybackAudibleDemo(winUsbHandle, endpoints, maxPacket);
             return;
         }
 
@@ -750,28 +777,182 @@ internal static class Program
         var duringDigPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 303, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER during stream");
         Console.WriteLine($"CHIP_DIG_POWER during stream: 0x{duringDigPower:X4}");
 
-        RunGeneratedAudioDemo(winUsbHandle, audioMaxPacket, AudioSourceDeviceGeneratedSine, "Stream codec probe audio");
-        PrintDebugStateSnapshot(winUsbHandle, maxPacket, 304, "Stream codec probe debug state");
+        var duringAdcDacCtrl = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 304, Sgtl5000AdcDacCtrlRegister, "CHIP_ADCDAC_CTRL during stream");
+        Console.WriteLine($"CHIP_ADCDAC_CTRL during stream: 0x{duringAdcDacCtrl:X4}");
 
-        var stopStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 305, 0x06, Array.Empty<byte>());
+        var duringAnaCtrl = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 305, Sgtl5000AnaCtrlRegister, "CHIP_ANA_CTRL during stream");
+        Console.WriteLine($"CHIP_ANA_CTRL during stream: 0x{duringAnaCtrl:X4}");
+
+        RunGeneratedAudioDemo(winUsbHandle, audioMaxPacket, AudioSourceDeviceGeneratedSine, "Stream codec probe audio");
+        PrintDebugStateSnapshot(winUsbHandle, maxPacket, 306, "Stream codec probe debug state");
+
+        var stopStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 307, 0x06, Array.Empty<byte>());
         ValidateResponseStatus(stopStreamResponse, expectedStatus: 0, "StopStream (stream codec probe)");
         Console.WriteLine($"Stream codec probe StopStream response: {DescribeFrame(stopStreamResponse)}");
 
         DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Stream codec probe post-stop");
         DrainAudioPackets(winUsbHandle, audioMaxPacket, "Stream codec probe post-stop audio");
 
-        var afterDigPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 306, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER after StopStream");
+        var afterDigPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 308, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER after StopStream");
         Console.WriteLine($"CHIP_DIG_POWER after StopStream: 0x{afterDigPower:X4}");
+
+        var afterAdcDacCtrl = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 309, Sgtl5000AdcDacCtrlRegister, "CHIP_ADCDAC_CTRL after StopStream");
+        Console.WriteLine($"CHIP_ADCDAC_CTRL after StopStream: 0x{afterAdcDacCtrl:X4}");
+
+        var afterAnaCtrl = ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 310, Sgtl5000AnaCtrlRegister, "CHIP_ANA_CTRL after StopStream");
+        Console.WriteLine($"CHIP_ANA_CTRL after StopStream: 0x{afterAnaCtrl:X4}");
 
         if (duringDigPower != 0x0021)
         {
             throw new InvalidOperationException($"Expected CHIP_DIG_POWER=0x0021 during active stream, got 0x{duringDigPower:X4}.");
         }
 
+        if (duringAdcDacCtrl != Sgtl5000ExpectedAdcDacCtrlPlayback)
+        {
+            throw new InvalidOperationException($"Expected CHIP_ADCDAC_CTRL=0x{Sgtl5000ExpectedAdcDacCtrlPlayback:X4} during active stream, got 0x{duringAdcDacCtrl:X4}.");
+        }
+
+        if (duringAnaCtrl != Sgtl5000ExpectedAnaCtrlPlayback)
+        {
+            throw new InvalidOperationException($"Expected CHIP_ANA_CTRL=0x{Sgtl5000ExpectedAnaCtrlPlayback:X4} during active stream, got 0x{duringAnaCtrl:X4}.");
+        }
+
         if (afterDigPower != 0x0000)
         {
             throw new InvalidOperationException($"Expected CHIP_DIG_POWER=0x0000 after StopStream, got 0x{afterDigPower:X4}.");
         }
+
+        if (afterAdcDacCtrl != Sgtl5000ExpectedAdcDacCtrlBaseline)
+        {
+            throw new InvalidOperationException($"Expected CHIP_ADCDAC_CTRL=0x{Sgtl5000ExpectedAdcDacCtrlBaseline:X4} after StopStream, got 0x{afterAdcDacCtrl:X4}.");
+        }
+
+        if (afterAnaCtrl != Sgtl5000ExpectedAnaCtrlBaseline)
+        {
+            throw new InvalidOperationException($"Expected CHIP_ANA_CTRL=0x{Sgtl5000ExpectedAnaCtrlBaseline:X4} after StopStream, got 0x{afterAnaCtrl:X4}.");
+        }
+    }
+
+    private static void RunPlaybackAudibleDemo(IntPtr winUsbHandle, Dictionary<byte, WinUsbPipeInformation> endpoints, ushort maxPacket)
+    {
+        if (!endpoints.ContainsKey(AudioOutPipe) || !endpoints.ContainsKey(AudioInPipe))
+        {
+            Console.WriteLine("Skipping playback audible demo: audio pipes 0x02/0x82 not both present.");
+            return;
+        }
+
+        var audioMaxPacket = endpoints[(byte)AudioInPipe].MaximumPacketSize;
+
+        DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Playback audible pre-drain");
+        DrainAudioPackets(winUsbHandle, audioMaxPacket, "Playback audible pre-drain audio");
+
+        var startStreamResponse = ExecuteCommand(winUsbHandle,
+                                                 maxPacket,
+                                                 400,
+                                                 0x05,
+                                                 BuildStartStreamPayload(LoopbackSampleRateHz,
+                                                                         LoopbackChannelCount,
+                                                                         LoopbackContainerBitsPerSample,
+                                                                         AudioSourceHostRxLoopback));
+        ValidateResponseStatus(startStreamResponse, expectedStatus: 0, "StartStream (playback audible)");
+        Console.WriteLine($"Playback audible StartStream response: {DescribeFrame(startStreamResponse)}");
+        Console.WriteLine("Playing 1 kHz sine for about 2 seconds...");
+
+        var playbackStopwatch = Stopwatch.StartNew();
+        var packetDurationTicks = (long)Math.Round((double)Stopwatch.Frequency * PlaybackAudibleFramesPerPacket / LoopbackSampleRateHz);
+        var nextPacketDeadlineTicks = packetDurationTicks;
+        var activeSnapshotCaptured = false;
+
+        for (var packetIndex = 0; packetIndex < PlaybackAudiblePacketCount; packetIndex++)
+        {
+            var flags = (packetIndex == 0) ? AudioFlagStartOfStream : (ushort)0;
+            var sequenceNumber = (uint)packetIndex;
+            var timestamp = (uint)(packetIndex * PlaybackAudibleFramesPerPacket);
+            var payload = BuildHostSinePayload(PlaybackAudibleFramesPerPacket,
+                                               LoopbackChannelCount,
+                                               LoopbackValidBitsPerSample,
+                                               LoopbackSampleRateHz,
+                                               frequencyHz: 1000.0,
+                                               startingFrameIndex: packetIndex * PlaybackAudibleFramesPerPacket);
+            var audioPacket = BuildAudioPacket(sequenceNumber,
+                                               timestamp,
+                                               LoopbackSampleRateHz,
+                                               LoopbackChannelCount,
+                                               LoopbackContainerBitsPerSample,
+                                               flags,
+                                               payload);
+
+            var echoedPacket = ExchangeAudioPacket(winUsbHandle, audioMaxPacket, audioPacket);
+
+            if (packetIndex == 0 || packetIndex == PlaybackAudiblePacketCount - 1)
+            {
+                Console.WriteLine($"Playback audible packet {packetIndex + 1}/{PlaybackAudiblePacketCount}: {DescribeAudioPacket(echoedPacket)}");
+            }
+
+            if (!activeSnapshotCaptured && packetIndex >= PlaybackAudibleSnapshotPacketIndex)
+            {
+                Console.WriteLine("Playback audible codec snapshot during active stream:");
+                try
+                {
+                    Console.WriteLine($"  CHIP_DIG_POWER = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 402, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER during playback"):X4}");
+                    Console.WriteLine($"  CHIP_ANA_POWER = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 403, Sgtl5000AnaPowerRegister, "CHIP_ANA_POWER during playback"):X4}");
+                    Console.WriteLine($"  CHIP_CLK_CTRL = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 404, Sgtl5000ClkCtrlRegister, "CHIP_CLK_CTRL during playback"):X4}");
+                    Console.WriteLine($"  CHIP_I2S_CTRL = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 405, Sgtl5000I2sCtrlRegister, "CHIP_I2S_CTRL during playback"):X4}");
+                    Console.WriteLine($"  CHIP_SSS_CTRL = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 406, Sgtl5000SssCtrlRegister, "CHIP_SSS_CTRL during playback"):X4}");
+                    Console.WriteLine($"  CHIP_ANA_HP_CTRL = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 407, Sgtl5000AnaHpCtrlRegister, "CHIP_ANA_HP_CTRL during playback"):X4}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"  Mid-stream codec snapshot failed: {ex.Message}");
+                }
+
+                PrintDebugStateSnapshot(winUsbHandle, maxPacket, 414, "Playback audible debug state during stream");
+                activeSnapshotCaptured = true;
+            }
+
+            WaitForPlaybackDeadline(playbackStopwatch, nextPacketDeadlineTicks);
+            nextPacketDeadlineTicks += packetDurationTicks;
+        }
+
+        var stopStreamResponse = ExecuteCommand(winUsbHandle, maxPacket, 408, 0x06, Array.Empty<byte>());
+        ValidateResponseStatus(stopStreamResponse, expectedStatus: 0, "StopStream (playback audible)");
+        Console.WriteLine($"Playback audible StopStream response: {DescribeFrame(stopStreamResponse)}");
+        DrainProtocolEvents(winUsbHandle, maxPacket, DrainEventAttemptsAfterStop, "Playback audible post-stop");
+        DrainAudioPackets(winUsbHandle, audioMaxPacket, "Playback audible post-stop audio");
+
+        Console.WriteLine("Playback audible codec snapshot after stop:");
+        Console.WriteLine($"  CHIP_DIG_POWER = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 409, Sgtl5000DigPowerRegister, "CHIP_DIG_POWER after playback"):X4}");
+        Console.WriteLine($"  CHIP_ANA_POWER = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 410, Sgtl5000AnaPowerRegister, "CHIP_ANA_POWER after playback"):X4}");
+        Console.WriteLine($"  CHIP_I2S_CTRL = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 411, Sgtl5000I2sCtrlRegister, "CHIP_I2S_CTRL after playback"):X4}");
+        Console.WriteLine($"  CHIP_SSS_CTRL = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 412, Sgtl5000SssCtrlRegister, "CHIP_SSS_CTRL after playback"):X4}");
+        Console.WriteLine($"  CHIP_ANA_HP_CTRL = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 413, Sgtl5000AnaHpCtrlRegister, "CHIP_ANA_HP_CTRL after playback"):X4}");
+        PrintDebugStateSnapshot(winUsbHandle, maxPacket, 415, "Playback audible debug state after stop");
+    }
+
+    private static byte[] BuildHostSinePayload(int frameCount,
+                                               byte channelCount,
+                                               int validBitsPerSample,
+                                               uint sampleRateHz,
+                                               double frequencyHz,
+                                               int startingFrameIndex)
+    {
+        var payload = new byte[frameCount * channelCount * sizeof(int)];
+        var amplitude = (1 << (validBitsPerSample - 2)) - 1;
+
+        for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
+        {
+            var samplePhase = 2.0 * Math.PI * frequencyHz * (startingFrameIndex + frameIndex) / sampleRateHz;
+            var sample24 = (int)(Math.Sin(samplePhase) * amplitude);
+            var sample32 = PackSample24ToMsbAligned32(sample24);
+
+            for (var channelIndex = 0; channelIndex < channelCount; channelIndex++)
+            {
+                var sampleOffset = ((frameIndex * channelCount) + channelIndex) * sizeof(int);
+                BinaryPrimitives.WriteInt32LittleEndian(payload.AsSpan(sampleOffset, sizeof(int)), sample32);
+            }
+        }
+
+        return payload;
     }
 
     private static void RunLoopbackBurstStress(IntPtr winUsbHandle, ushort audioMaxPacket)
@@ -1126,6 +1307,15 @@ internal static class Program
         var tests = new (string Label, ushort TargetValue)[]
         {
             ("set VAG powerup", (ushort)(baselineAnaPower | 0x0080)),
+            ("set VAG + DAC + capless", (ushort)(baselineAnaPower | 0x008C)),
+            ("set VAG + DAC + LINREG_D", (ushort)(baselineAnaPower | 0x0288)),
+            ("set VAG + DAC + charge pump", (ushort)(baselineAnaPower | 0x0888)),
+            ("set VAG + DAC + capless + LINREG_D", (ushort)(baselineAnaPower | 0x028C)),
+            ("set VAG + DAC + capless + charge pump", (ushort)(baselineAnaPower | 0x088C)),
+            ("set VAG + headphone powerup", (ushort)(baselineAnaPower | 0x0090)),
+            ("set VAG + DAC powerup", (ushort)(baselineAnaPower | 0x0088)),
+            ("set VAG + headphone + DAC powerup", (ushort)(baselineAnaPower | 0x0098)),
+            ("set VAG + headphone + DAC + capless", (ushort)(baselineAnaPower | 0x009C)),
             ("set headphone powerup", (ushort)(baselineAnaPower | 0x0010)),
             ("set DAC powerup", (ushort)(baselineAnaPower | 0x0008)),
             ("set ADC powerup", (ushort)(baselineAnaPower | 0x0002)),
@@ -1140,8 +1330,89 @@ internal static class Program
 
         foreach (var test in tests)
         {
-            RunCodecAnalogStep(winUsbHandle, maxPacket, ref sequence, baselineAnaPower, test.TargetValue, test.Label);
+            try
+            {
+                RunCodecAnalogStep(winUsbHandle, maxPacket, ref sequence, baselineAnaPower, test.TargetValue, test.Label);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Analog step '{test.Label}' failed: {ex.Message}");
+            }
         }
+
+        var stagedSequences = new (string Label, ushort[] Values)[]
+        {
+            ("VAG -> HP -> capless -> DAC", new ushort[] { 0x70E0, 0x70F0, 0x70F4, 0x70FC }),
+            ("VAG -> DAC -> capless -> HP", new ushort[] { 0x70E0, 0x70E8, 0x70EC, 0x70FC }),
+            ("DAC -> VAG -> capless -> HP", new ushort[] { 0x7068, 0x70E8, 0x70EC, 0x70FC }),
+        };
+
+        foreach (var stagedSequence in stagedSequences)
+        {
+            try
+            {
+                RunCodecAnalogStagedSequence(winUsbHandle, maxPacket, ref sequence, baselineAnaPower, stagedSequence.Label, stagedSequence.Values);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Analog staged sequence '{stagedSequence.Label}' failed: {ex.Message}");
+            }
+        }
+    }
+
+    private static void RunCodecPlaybackSequenceSmokeDemo(IntPtr winUsbHandle, ushort maxPacket)
+    {
+        Console.WriteLine("Running SGTL5000 playback sequence smoke test over control-plane I2C...");
+
+        const ushort playbackRefCtrl = 0x01F1;
+        const ushort playbackAnaPower = 0x70FC;
+        const ushort playbackDigPower = 0x0021;
+        const ushort playbackHpCtrl = 0x1818;
+        const ushort playbackDacVol = 0x5C5C;
+        const ushort playbackAdcDacCtrl = 0x3230;
+        const ushort playbackAnaCtrl = 0x0001;
+
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 60, "CHIP_DIG_POWER baseline", Sgtl5000DigPowerRegister, expectedValue: 0x0000);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 61, "CHIP_ANA_POWER baseline", Sgtl5000AnaPowerRegister, expectedValue: 0x7060);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 62, "CHIP_REF_CTRL baseline", Sgtl5000RefCtrlRegister, expectedValue: 0x0000);
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 63, Sgtl5000RefCtrlRegister, playbackRefCtrl, "CHIP_REF_CTRL playback bias");
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 64, "CHIP_REF_CTRL after write", Sgtl5000RefCtrlRegister, expectedValue: playbackRefCtrl);
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 65, Sgtl5000DigPowerRegister, playbackDigPower, "CHIP_DIG_POWER playback enable");
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 66, "CHIP_DIG_POWER after write", Sgtl5000DigPowerRegister, expectedValue: playbackDigPower);
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 67, Sgtl5000AnaPowerRegister, playbackAnaPower, "CHIP_ANA_POWER playback enable");
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 68, "CHIP_ANA_POWER after write", Sgtl5000AnaPowerRegister, expectedValue: playbackAnaPower);
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 69, Sgtl5000AnaHpCtrlRegister, playbackHpCtrl, "CHIP_ANA_HP_CTRL playback volume");
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 70, "CHIP_ANA_HP_CTRL after write", Sgtl5000AnaHpCtrlRegister, expectedValue: playbackHpCtrl);
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 71, Sgtl5000DacVolRegister, playbackDacVol, "CHIP_DAC_VOL playback volume");
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 72, "CHIP_DAC_VOL after write", Sgtl5000DacVolRegister, expectedValue: playbackDacVol);
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 73, Sgtl5000AdcDacCtrlRegister, playbackAdcDacCtrl, "CHIP_ADCDAC_CTRL playback unmute");
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 74, "CHIP_ADCDAC_CTRL after write", Sgtl5000AdcDacCtrlRegister, expectedValue: playbackAdcDacCtrl);
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 75, Sgtl5000AnaCtrlRegister, playbackAnaCtrl, "CHIP_ANA_CTRL playback unmute");
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 76, "CHIP_ANA_CTRL after write", Sgtl5000AnaCtrlRegister, expectedValue: playbackAnaCtrl);
+
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 77, "CHIP_ID after playback sequence", Sgtl5000ChipIdRegister, expectedValue: 0xA011);
+
+        Thread.Sleep(250);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 78, "CHIP_DIG_POWER after 250ms", Sgtl5000DigPowerRegister, expectedValue: playbackDigPower);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 79, "CHIP_ANA_POWER after 250ms", Sgtl5000AnaPowerRegister, expectedValue: playbackAnaPower);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 80, "CHIP_ADCDAC_CTRL after 250ms", Sgtl5000AdcDacCtrlRegister, expectedValue: playbackAdcDacCtrl);
+        DumpCodecRegister16(winUsbHandle, maxPacket, sequence: 81, "CHIP_ANA_CTRL after 250ms", Sgtl5000AnaCtrlRegister, expectedValue: playbackAnaCtrl);
+        Console.WriteLine($"  CHIP_REF_CTRL after 250ms = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 82, Sgtl5000RefCtrlRegister, "CHIP_REF_CTRL after 250ms"):X4}");
+        Console.WriteLine($"  CHIP_ANA_STATUS after 250ms = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 83, Sgtl5000AnaStatusRegister, "CHIP_ANA_STATUS after 250ms"):X4}");
+        Console.WriteLine($"  CHIP_SHORT_CTRL after 250ms = 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence: 84, Sgtl5000ShortCtrlRegister, "CHIP_SHORT_CTRL after 250ms"):X4}");
+
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 85, Sgtl5000AnaCtrlRegister, Sgtl5000ExpectedAnaCtrlBaseline, "CHIP_ANA_CTRL restore baseline");
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 86, Sgtl5000AdcDacCtrlRegister, Sgtl5000ExpectedAdcDacCtrlBaseline, "CHIP_ADCDAC_CTRL restore baseline");
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 87, Sgtl5000AnaPowerRegister, Sgtl5000ExpectedAnaPowerValue, "CHIP_ANA_POWER restore baseline");
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 88, Sgtl5000DigPowerRegister, 0x0000, "CHIP_DIG_POWER restore baseline");
+        WriteCodecRegister16(winUsbHandle, maxPacket, sequence: 89, Sgtl5000RefCtrlRegister, 0x0000, "CHIP_REF_CTRL restore baseline");
     }
 
     private static void RunCodecAnalogStep(IntPtr winUsbHandle,
@@ -1153,27 +1424,88 @@ internal static class Program
     {
         Console.WriteLine($"Testing analog step: {label} target=0x{targetAnaPower:X4}");
 
-        WriteCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, targetAnaPower, $"CHIP_ANA_POWER {label}");
+        ushort observedAnaPower = 0;
+        ushort restoredAnaPower = 0;
 
-        var observedAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER after {label}");
-        Console.WriteLine($"Observed CHIP_ANA_POWER after {label}: 0x{observedAnaPower:X4}");
-
-        var chipIdAfterStep = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000ChipIdRegister, $"CHIP_ID after {label}");
-        Console.WriteLine($"CHIP_ID after {label}: 0x{chipIdAfterStep:X4}");
-
-        WriteCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, baselineAnaPower, $"CHIP_ANA_POWER restore after {label}");
-
-        var restoredAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER restored after {label}");
-        Console.WriteLine($"Restored CHIP_ANA_POWER after {label}: 0x{restoredAnaPower:X4}");
-
-        if (observedAnaPower != targetAnaPower)
+        try
         {
-            throw new InvalidOperationException($"Analog step '{label}' did not stick. Expected 0x{targetAnaPower:X4}, got 0x{observedAnaPower:X4}.");
+            WriteCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, targetAnaPower, $"CHIP_ANA_POWER {label}");
+
+            observedAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER after {label}");
+            Console.WriteLine($"Observed CHIP_ANA_POWER after {label}: 0x{observedAnaPower:X4}");
+
+            var chipIdAfterStep = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000ChipIdRegister, $"CHIP_ID after {label}");
+            Console.WriteLine($"CHIP_ID after {label}: 0x{chipIdAfterStep:X4}");
+
+            Thread.Sleep(250);
+            var heldAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER 250ms after {label}");
+            Console.WriteLine($"Held CHIP_ANA_POWER after {label}: 0x{heldAnaPower:X4}");
+            Console.WriteLine($"CHIP_ANA_STATUS after {label}: 0x{ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaStatusRegister, $"CHIP_ANA_STATUS after {label}"):X4}");
+
+            if (observedAnaPower != targetAnaPower)
+            {
+                throw new InvalidOperationException($"Analog step '{label}' did not stick. Expected 0x{targetAnaPower:X4}, got 0x{observedAnaPower:X4}.");
+            }
+
+            if (heldAnaPower != targetAnaPower)
+            {
+                throw new InvalidOperationException($"Analog step '{label}' did not hold for 250ms. Expected 0x{targetAnaPower:X4}, got 0x{heldAnaPower:X4}.");
+            }
+        }
+        finally
+        {
+            WriteCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, baselineAnaPower, $"CHIP_ANA_POWER restore after {label}");
+            restoredAnaPower = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER restored after {label}");
+            Console.WriteLine($"Restored CHIP_ANA_POWER after {label}: 0x{restoredAnaPower:X4}");
         }
 
         if (restoredAnaPower != baselineAnaPower)
         {
             throw new InvalidOperationException($"Analog step '{label}' did not restore baseline. Expected 0x{baselineAnaPower:X4}, got 0x{restoredAnaPower:X4}.");
+        }
+    }
+
+    private static void RunCodecAnalogStagedSequence(IntPtr winUsbHandle,
+                                                     ushort maxPacket,
+                                                     ref ushort sequence,
+                                                     ushort baselineAnaPower,
+                                                     string label,
+                                                     ushort[] stagedValues)
+    {
+        Console.WriteLine($"Testing staged analog sequence: {label}");
+
+        try
+        {
+            for (var index = 0; index < stagedValues.Length; index++)
+            {
+                var value = stagedValues[index];
+                var stepLabel = $"{label} step {index + 1}";
+
+                WriteCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, value, $"CHIP_ANA_POWER {stepLabel}");
+
+                var immediateValue = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER after {stepLabel}");
+                Console.WriteLine($"Immediate CHIP_ANA_POWER after {stepLabel}: 0x{immediateValue:X4}");
+
+                Thread.Sleep(250);
+                var heldValue = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER held after {stepLabel}");
+                Console.WriteLine($"Held CHIP_ANA_POWER after {stepLabel}: 0x{heldValue:X4}");
+
+                if (immediateValue != value)
+                {
+                    throw new InvalidOperationException($"{stepLabel} did not stick immediately. Expected 0x{value:X4}, got 0x{immediateValue:X4}.");
+                }
+
+                if (heldValue != value)
+                {
+                    throw new InvalidOperationException($"{stepLabel} did not hold for 250ms. Expected 0x{value:X4}, got 0x{heldValue:X4}.");
+                }
+            }
+        }
+        finally
+        {
+            WriteCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, baselineAnaPower, $"CHIP_ANA_POWER restore after {label}");
+            var restoredValue = ReadCodecRegister16(winUsbHandle, maxPacket, sequence++, Sgtl5000AnaPowerRegister, $"CHIP_ANA_POWER restored after {label}");
+            Console.WriteLine($"Restored CHIP_ANA_POWER after {label}: 0x{restoredValue:X4}");
         }
     }
 
@@ -1327,6 +1659,27 @@ internal static class Program
     private static int UnpackMsbAligned24(int sample32)
     {
         return sample32 >> 8;
+    }
+
+    private static void WaitForPlaybackDeadline(Stopwatch stopwatch, long targetTicks)
+    {
+        while (true)
+        {
+            var remainingTicks = targetTicks - stopwatch.ElapsedTicks;
+            if (remainingTicks <= 0)
+            {
+                return;
+            }
+
+            var remainingMilliseconds = remainingTicks * 1000.0 / Stopwatch.Frequency;
+            if (remainingMilliseconds > 2.0)
+            {
+                Thread.Sleep((int)remainingMilliseconds - 1);
+                continue;
+            }
+
+            Thread.SpinWait(500);
+        }
     }
 
     private static byte[] ExchangeAudioPacket(IntPtr winUsbHandle, ushort maxPacket, byte[] audioPacket)
@@ -2001,7 +2354,43 @@ internal static class Program
 
         var faultCode = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(0, 4));
         var detail = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(4, 4));
+
+        if (faultCode == CodecEnableFaultCode)
+        {
+            var codecStep = (ushort)(detail >> 16);
+            var codecStatus = (ushort)(detail & 0xFFFF);
+            return $"event Fault faultCode={faultCode} detail={detail} codecEnableStep={GetCodecEnableStepName(codecStep)}({codecStep}) codecDriverStatus={GetCodecDriverStatusName(codecStatus)}({codecStatus})";
+        }
+
         return $"event Fault faultCode={faultCode} detail={detail}";
+    }
+
+    private static string GetCodecEnableStepName(ushort step)
+    {
+        return step switch
+        {
+            0 => "Idle",
+            1 => "Init",
+            2 => "WriteDigPower",
+            3 => "WriteAnaPower",
+            4 => "WriteHpVolume",
+            5 => "WriteDacVolume",
+            6 => "WriteAdcDacCtrl",
+            7 => "WriteAnaCtrl",
+            8 => "Completed",
+            _ => "UnknownCodecEnableStep",
+        };
+    }
+
+    private static string GetCodecDriverStatusName(ushort driverStatus)
+    {
+        return driverStatus switch
+        {
+            0 => "Success",
+            902 => "Nak",
+            905 => "ArbitrationLost",
+            _ => "UnknownDriverStatus",
+        };
     }
 
     private static void SetTimeout(IntPtr winUsbHandle, byte pipeId, uint timeoutMs)

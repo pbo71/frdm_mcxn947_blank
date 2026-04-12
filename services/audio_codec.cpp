@@ -12,11 +12,29 @@ namespace
 {
 constexpr uint8_t kCodecRegisterAddressSize = 2U;
 constexpr uint16_t kExpectedChipId = 0xA011U;
+constexpr uint16_t kCodecBaselineAdcDacCtrl = 0x323CU;
+constexpr uint16_t kCodecBaselineAnaCtrl = 0x0111U;
+constexpr uint16_t kCodecBaselineAnaPower = 0x7060U;
 constexpr uint16_t kCodecBaselineDigPower = 0x0000U;
+constexpr uint16_t kCodecBaselineRefCtrl = 0x0000U;
+constexpr uint16_t kCodecBaselineShortCtrl = 0x0000U;
+constexpr uint16_t kCodecPlaybackAdcDacCtrl = 0x3230U;
+constexpr uint16_t kCodecPlaybackAnaCtrl = 0x0001U;
+constexpr uint16_t kCodecPlaybackAnaPower = 0x7068U;
 constexpr uint16_t kCodecPlaybackDigPower = 0x0021U;
+constexpr uint16_t kCodecPlaybackRefCtrl = 0x0000U;
+constexpr uint16_t kCodecDefaultHpVolume = 0x1818U;
+constexpr uint16_t kCodecDefaultDacVolume = 0x5C5CU;
+constexpr uint32_t kCodecAnalogPowerSettlingDelayUs = 100000U;
+constexpr uint32_t kCodecPlaybackPowerDelayUs = 20000U;
+constexpr uint32_t kCodecVagPowerDelayUs = 500000U;
+constexpr uint32_t kCodecRegisterRetryDelayUs = 5000U;
+constexpr uint32_t kCodecRegisterRetryCount = 3U;
 constexpr uint32_t kCodecInitSettlingDelayUs = 20000U;
 constexpr uint32_t kCodecInitRetryDelayUs = 5000U;
 constexpr uint32_t kCodecInitMaxAttempts = 5U;
+constexpr uint32_t kCodecRecoveryMaxAttempts = 3U;
+constexpr uint32_t kCodecRecoveryDelayUs = 5000U;
 
 enum AudioCodecInitStep : uint32_t
 {
@@ -25,9 +43,30 @@ enum AudioCodecInitStep : uint32_t
     kAudioCodecInitStepCompleted,
 };
 
+enum AudioCodecPlaybackEnableStep : uint32_t
+{
+    kAudioCodecPlaybackEnableStepIdle = 0U,
+    kAudioCodecPlaybackEnableStepInit,
+    kAudioCodecPlaybackEnableStepWriteDigPower,
+    kAudioCodecPlaybackEnableStepWriteAnaPower,
+    kAudioCodecPlaybackEnableStepWriteHpVolume,
+    kAudioCodecPlaybackEnableStepWriteDacVolume,
+    kAudioCodecPlaybackEnableStepWriteAdcDacCtrl,
+    kAudioCodecPlaybackEnableStepWriteAnaCtrl,
+    kAudioCodecPlaybackEnableStepCompleted,
+};
+
 bool g_codecI2cInitialized = false;
 uint32_t g_audioCodecInitAttemptCount = 0U;
 uint32_t g_audioCodecLastInitStep = kAudioCodecInitStepIdle;
+uint32_t g_audioCodecLastPlaybackEnableStep = kAudioCodecPlaybackEnableStepIdle;
+status_t g_audioCodecLastPlaybackEnableStatus = kStatus_Success;
+
+void SetPlaybackEnableProgress(uint32_t step, status_t status)
+{
+    g_audioCodecLastPlaybackEnableStep = step;
+    g_audioCodecLastPlaybackEnableStatus = status;
+}
 
 void EnsureCodecI2cInitialized(void)
 {
@@ -74,6 +113,26 @@ status_t ReadCodecRegister(uint16_t reg, uint16_t *value)
     return kStatus_Success;
 }
 
+status_t WriteCodecRegister(uint16_t reg, uint16_t value);
+
+status_t WriteCodecRegisterWithRetry(uint16_t reg, uint16_t value)
+{
+    status_t status = kStatus_Fail;
+
+    for (uint32_t attempt = 0U; attempt < kCodecRegisterRetryCount; ++attempt)
+    {
+        status = WriteCodecRegister(reg, value);
+        if (status == kStatus_Success)
+        {
+            return status;
+        }
+
+        SDK_DelayAtLeastUs(kCodecRegisterRetryDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+    }
+
+    return status;
+}
+
 status_t WriteCodecRegister(uint16_t reg, uint16_t value)
 {
     uint8_t payload[2] = {
@@ -84,7 +143,75 @@ status_t WriteCodecRegister(uint16_t reg, uint16_t value)
     return CodecI2cTransfer(reg, kLPI2C_Write, payload, sizeof(payload));
 }
 
+status_t WritePlaybackCoreRegisters(void)
+{
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, kStatus_Success);
+    status_t status = WriteCodecRegisterWithRetry(CHIP_DIG_POWER, kCodecPlaybackDigPower);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
+        return status;
+    }
+
+    return kStatus_Success;
+}
+
+status_t WritePlaybackAnalogPowerSequence(void)
+{
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, kStatus_Success);
+    status_t status = WriteCodecRegisterWithRetry(CHIP_SHORT_CTRL, kCodecBaselineShortCtrl);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
+        return status;
+    }
+
+    status = WriteCodecRegisterWithRetry(CHIP_REF_CTRL, kCodecPlaybackRefCtrl);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
+        return status;
+    }
+
+    status = WriteCodecRegisterWithRetry(CHIP_ANA_POWER, kCodecPlaybackAnaPower);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
+        return status;
+    }
+    SDK_DelayAtLeastUs(kCodecPlaybackPowerDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+
+    return kStatus_Success;
+}
+
+status_t WritePlaybackRegisters(bool includeSettlingDelays)
+{
+    status_t status = kStatus_Success;
+
+    status = WritePlaybackAnalogPowerSequence();
+    if (status != kStatus_Success)
+    {
+        return status;
+    }
+
+    status = WritePlaybackCoreRegisters();
+    if (status != kStatus_Success)
+    {
+        return status;
+    }
+
+    if (includeSettlingDelays)
+    {
+        SDK_DelayAtLeastUs(kCodecAnalogPowerSettlingDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+        SDK_DelayAtLeastUs(kCodecPlaybackPowerDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+    }
+
+    return kStatus_Success;
+}
+
 status_t g_audioCodecInitStatus = kStatus_Fail;
+status_t g_audioCodecLastRecoveryStatus = kStatus_Fail;
+uint32_t g_audioCodecLastRecoveryAttemptCount = 0U;
 }
 
 extern "C" status_t AudioCodec_Init(void)
@@ -146,7 +273,35 @@ extern "C" uint32_t AudioCodec_GetLastInitStep(void)
     return g_audioCodecLastInitStep;
 }
 
+extern "C" uint32_t AudioCodec_GetLastPlaybackEnableStep(void)
+{
+    return g_audioCodecLastPlaybackEnableStep;
+}
+
+extern "C" status_t AudioCodec_GetLastPlaybackEnableStatus(void)
+{
+    return g_audioCodecLastPlaybackEnableStatus;
+}
+
 extern "C" status_t AudioCodec_EnablePlaybackDigitalPath(void)
+{
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepInit, kStatus_Success);
+
+    status_t status = AudioCodec_Init();
+
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepInit, status);
+        return status;
+    }
+
+    // Isolation mode: keep codec runtime path as a no-op to verify whether
+    // playback-time register writes are the source of I2C instability.
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepCompleted, kStatus_Success);
+    return kStatus_Success;
+}
+
+extern "C" status_t AudioCodec_RefreshPlaybackDigitalPath(void)
 {
     status_t status = AudioCodec_Init();
 
@@ -155,17 +310,66 @@ extern "C" status_t AudioCodec_EnablePlaybackDigitalPath(void)
         return status;
     }
 
-    return WriteCodecRegister(CHIP_DIG_POWER, kCodecPlaybackDigPower);
+    return WritePlaybackCoreRegisters();
+}
+
+extern "C" status_t AudioCodec_RecoverI2cBus(void)
+{
+    status_t status = kStatus_Fail;
+
+    g_audioCodecLastRecoveryAttemptCount = 0U;
+    g_audioCodecLastRecoveryStatus = kStatus_Fail;
+
+    for (uint32_t attempt = 0U; attempt < kCodecRecoveryMaxAttempts; ++attempt)
+    {
+        g_audioCodecLastRecoveryAttemptCount = attempt + 1U;
+
+        if (g_codecI2cInitialized)
+        {
+            LPI2C_MasterDeinit(BOARD_CODEC_I2C_BASEADDR);
+            g_codecI2cInitialized = false;
+        }
+
+        EnsureCodecI2cInitialized();
+        SDK_DelayAtLeastUs(kCodecRecoveryDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+
+        uint16_t chipId = 0U;
+        status = ReadCodecRegister(CHIP_ID, &chipId);
+        if ((status == kStatus_Success) && (chipId == kExpectedChipId))
+        {
+            g_audioCodecLastRecoveryStatus = kStatus_Success;
+            return kStatus_Success;
+        }
+
+        if (status == kStatus_Success)
+        {
+            status = kStatus_Fail;
+        }
+
+        SDK_DelayAtLeastUs(kCodecRecoveryDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+    }
+
+    g_audioCodecLastRecoveryStatus = status;
+    return status;
+}
+
+extern "C" status_t AudioCodec_GetLastRecoveryStatus(void)
+{
+    return g_audioCodecLastRecoveryStatus;
+}
+
+extern "C" uint32_t AudioCodec_GetLastRecoveryAttemptCount(void)
+{
+    return g_audioCodecLastRecoveryAttemptCount;
 }
 
 extern "C" status_t AudioCodec_DisablePlaybackDigitalPath(void)
 {
     status_t status = AudioCodec_Init();
-
     if (status != kStatus_Success)
     {
         return status;
     }
 
-    return WriteCodecRegister(CHIP_DIG_POWER, kCodecBaselineDigPower);
+    return AudioCodec_RecoverI2cBus();
 }
