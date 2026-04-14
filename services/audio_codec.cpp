@@ -3,6 +3,8 @@ extern "C" {
 #include "peripherals.h"
 #include "fsl_sgtl5000.h"
 #include "fsl_lpflexcomm.h"
+#include "fsl_gpio.h"
+#include "fsl_port.h"
 }
 
 #include "audio_codec.h"
@@ -17,16 +19,16 @@ constexpr uint16_t kCodecBaselineAnaCtrl = 0x0111U;
 constexpr uint16_t kCodecBaselineAnaPower = 0x7060U;
 constexpr uint16_t kCodecBaselineDigPower = 0x0000U;
 constexpr uint16_t kCodecBaselineRefCtrl = 0x0000U;
-constexpr uint16_t kCodecBaselineShortCtrl = 0x0000U;
-constexpr uint16_t kCodecPlaybackAdcDacCtrl = 0x3230U;
-constexpr uint16_t kCodecPlaybackAnaCtrl = 0x0001U;
-constexpr uint16_t kCodecPlaybackAnaPower = 0x7068U;
-constexpr uint16_t kCodecPlaybackDigPower = 0x0021U;
-constexpr uint16_t kCodecPlaybackRefCtrl = 0x0000U;
+constexpr uint16_t kCodecPlaybackAdcDacCtrl = 0x0000U;
+constexpr uint16_t kCodecPlaybackAnaCtrl = 0x0000U;
+constexpr uint16_t kCodecPlaybackDigPower = 0x0073U;
+constexpr uint16_t kCodecPlaybackClkCtrl = 0x0008U;
+constexpr uint16_t kCodecPlaybackI2sCtrl = 0x0130U;
+constexpr uint16_t kCodecPlaybackSssCtrl = 0x0010U;
+// Keep ANA_POWER at board-stable baseline for this MCXN947 + Teensy shield setup.
+constexpr uint16_t kCodecPlaybackAnaPower = 0x7060U;
 constexpr uint16_t kCodecDefaultHpVolume = 0x1818U;
-constexpr uint16_t kCodecDefaultDacVolume = 0x5C5CU;
-constexpr uint32_t kCodecAnalogPowerSettlingDelayUs = 100000U;
-constexpr uint32_t kCodecPlaybackPowerDelayUs = 20000U;
+constexpr uint16_t kCodecDefaultDacVolume = 0x0172U;
 constexpr uint32_t kCodecVagPowerDelayUs = 500000U;
 constexpr uint32_t kCodecRegisterRetryDelayUs = 5000U;
 constexpr uint32_t kCodecRegisterRetryCount = 3U;
@@ -74,6 +76,12 @@ void EnsureCodecI2cInitialized(void)
     {
         return;
     }
+
+    // SGTL5000 RESET# is wired to FRDM J1-12 = P5_3 (PORT5 pin 3 / GPIO5 pin 3).
+    // Drive it HIGH (active-low deassert) so the codec is not held in reset.
+    PORT_SetPinMux(PORT5, 3U, kPORT_MuxAlt0);  // GPIO function
+    gpio_pin_config_t resetPinHigh = {kGPIO_DigitalOutput, 1U};
+    GPIO_PinInit(GPIO5, 3U, &resetPinHigh);
 
     lpi2c_master_config_t codecI2cConfig = {0};
 
@@ -151,59 +159,6 @@ status_t WritePlaybackCoreRegisters(void)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
         return status;
-    }
-
-    return kStatus_Success;
-}
-
-status_t WritePlaybackAnalogPowerSequence(void)
-{
-    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, kStatus_Success);
-    status_t status = WriteCodecRegisterWithRetry(CHIP_SHORT_CTRL, kCodecBaselineShortCtrl);
-    if (status != kStatus_Success)
-    {
-        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
-        return status;
-    }
-
-    status = WriteCodecRegisterWithRetry(CHIP_REF_CTRL, kCodecPlaybackRefCtrl);
-    if (status != kStatus_Success)
-    {
-        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
-        return status;
-    }
-
-    status = WriteCodecRegisterWithRetry(CHIP_ANA_POWER, kCodecPlaybackAnaPower);
-    if (status != kStatus_Success)
-    {
-        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
-        return status;
-    }
-    SDK_DelayAtLeastUs(kCodecPlaybackPowerDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
-
-    return kStatus_Success;
-}
-
-status_t WritePlaybackRegisters(bool includeSettlingDelays)
-{
-    status_t status = kStatus_Success;
-
-    status = WritePlaybackAnalogPowerSequence();
-    if (status != kStatus_Success)
-    {
-        return status;
-    }
-
-    status = WritePlaybackCoreRegisters();
-    if (status != kStatus_Success)
-    {
-        return status;
-    }
-
-    if (includeSettlingDelays)
-    {
-        SDK_DelayAtLeastUs(kCodecAnalogPowerSettlingDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
-        SDK_DelayAtLeastUs(kCodecPlaybackPowerDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
     }
 
     return kStatus_Success;
@@ -295,8 +250,84 @@ extern "C" status_t AudioCodec_EnablePlaybackDigitalPath(void)
         return status;
     }
 
-    // Isolation mode: keep codec runtime path as a no-op to verify whether
-    // playback-time register writes are the source of I2C instability.
+    // 1. Program ANA_POWER and continue if the I2C write succeeds.
+    // Some board/codec states may keep ANA_POWER readback at baseline even when
+    // playback can still proceed, so do not hard-fail on readback mismatch here.
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, kStatus_Success);
+    status = WriteCodecRegisterWithRetry(CHIP_ANA_POWER, kCodecPlaybackAnaPower);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
+        return status;
+    }
+    SDK_DelayAtLeastUs(20000U, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+
+    // 2. Enable I2S_IN and DAC digital power
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, kStatus_Success);
+    status = WriteCodecRegisterWithRetry(CHIP_DIG_POWER, kCodecPlaybackDigPower);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
+        return status;
+    }
+
+    status = WriteCodecRegisterWithRetry(CHIP_CLK_CTRL, kCodecPlaybackClkCtrl);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
+        return status;
+    }
+
+    status = WriteCodecRegisterWithRetry(CHIP_I2S_CTRL, kCodecPlaybackI2sCtrl);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
+        return status;
+    }
+
+    status = WriteCodecRegisterWithRetry(CHIP_SSS_CTRL, kCodecPlaybackSssCtrl);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
+        return status;
+    }
+
+    // 3. Set HP volume
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteHpVolume, kStatus_Success);
+    status = WriteCodecRegisterWithRetry(CHIP_ANA_HP_CTRL, kCodecDefaultHpVolume);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteHpVolume, status);
+        return status;
+    }
+
+    // 4. Set DAC volume
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDacVolume, kStatus_Success);
+    status = WriteCodecRegisterWithRetry(CHIP_DAC_VOL, kCodecDefaultDacVolume);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDacVolume, status);
+        return status;
+    }
+
+    // 5. Unmute DAC
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAdcDacCtrl, kStatus_Success);
+    status = WriteCodecRegisterWithRetry(CHIP_ADCDAC_CTRL, kCodecPlaybackAdcDacCtrl);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAdcDacCtrl, status);
+        return status;
+    }
+
+    // 6. Unmute headphone output
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaCtrl, kStatus_Success);
+    status = WriteCodecRegisterWithRetry(CHIP_ANA_CTRL, kCodecPlaybackAnaCtrl);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaCtrl, status);
+        return status;
+    }
+
     SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepCompleted, kStatus_Success);
     return kStatus_Success;
 }
