@@ -25,8 +25,24 @@ constexpr uint16_t kCodecPlaybackDigPower = 0x0073U;
 constexpr uint16_t kCodecPlaybackClkCtrl = 0x0008U;
 constexpr uint16_t kCodecPlaybackI2sCtrl = 0x0130U;
 constexpr uint16_t kCodecPlaybackSssCtrl = 0x0010U;
-// Keep ANA_POWER at board-stable baseline for this MCXN947 + Teensy shield setup.
-constexpr uint16_t kCodecPlaybackAnaPower = 0x7060U;
+constexpr uint16_t kCodecPlaybackLinRegCtrl = 0x0004U;
+constexpr uint16_t kCodecPlaybackRefCtrl = 0x0000U;
+enum AudioCodecAnaPowerProfile : uint8_t
+{
+    kAudioCodecAnaPowerProfileStable7060 = 0U,
+    kAudioCodecAnaPowerProfileAggressive6AFF = 1U,
+};
+
+// A/B selector for ANA_POWER experiments.
+// 0 = stable baseline (no NAK), 1 = aggressive full analog profile.
+constexpr AudioCodecAnaPowerProfile kCodecAnaPowerProfile = kAudioCodecAnaPowerProfileStable7060;
+
+constexpr uint16_t kCodecPlaybackAnaPowerStable = 0x7060U;
+constexpr uint16_t kCodecPlaybackAnaPowerAggressive = 0x6AFFU;
+constexpr uint16_t kCodecPlaybackAnaPower =
+    (kCodecAnaPowerProfile == kAudioCodecAnaPowerProfileAggressive6AFF) ?
+        kCodecPlaybackAnaPowerAggressive :
+        kCodecPlaybackAnaPowerStable;
 constexpr uint16_t kCodecDefaultHpVolume = 0x1818U;
 constexpr uint16_t kCodecDefaultDacVolume = 0x0172U;
 constexpr uint32_t kCodecVagPowerDelayUs = 500000U;
@@ -37,6 +53,8 @@ constexpr uint32_t kCodecInitRetryDelayUs = 5000U;
 constexpr uint32_t kCodecInitMaxAttempts = 5U;
 constexpr uint32_t kCodecRecoveryMaxAttempts = 3U;
 constexpr uint32_t kCodecRecoveryDelayUs = 5000U;
+constexpr uint16_t kCodecVerifyMaskAll = 0xFFFFU;
+constexpr uint16_t kCodecVerifyMaskAdcDacCtrl = 0xCFFFU;
 
 enum AudioCodecInitStep : uint32_t
 {
@@ -151,6 +169,39 @@ status_t WriteCodecRegister(uint16_t reg, uint16_t value)
     return CodecI2cTransfer(reg, kLPI2C_Write, payload, sizeof(payload));
 }
 
+status_t WriteCodecRegisterAndVerify(uint16_t reg, uint16_t value, uint16_t verifyMask)
+{
+    status_t status = kStatus_Fail;
+
+    for (uint32_t attempt = 0U; attempt < kCodecRegisterRetryCount; ++attempt)
+    {
+        status = WriteCodecRegister(reg, value);
+        if (status != kStatus_Success)
+        {
+            SDK_DelayAtLeastUs(kCodecRegisterRetryDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+            continue;
+        }
+
+        uint16_t readback = 0U;
+        status = ReadCodecRegister(reg, &readback);
+        if (status != kStatus_Success)
+        {
+            SDK_DelayAtLeastUs(kCodecRegisterRetryDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+            continue;
+        }
+
+        if ((readback & verifyMask) == (value & verifyMask))
+        {
+            return kStatus_Success;
+        }
+
+        status = kStatus_Fail;
+        SDK_DelayAtLeastUs(kCodecRegisterRetryDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+    }
+
+    return status;
+}
+
 status_t WritePlaybackCoreRegisters(void)
 {
     SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, kStatus_Success);
@@ -250,78 +301,91 @@ extern "C" status_t AudioCodec_EnablePlaybackDigitalPath(void)
         return status;
     }
 
-    // 1. Program ANA_POWER and continue if the I2C write succeeds.
-    // Some board/codec states may keep ANA_POWER readback at baseline even when
-    // playback can still proceed, so do not hard-fail on readback mismatch here.
-    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, kStatus_Success);
-    status = WriteCodecRegisterWithRetry(CHIP_ANA_POWER, kCodecPlaybackAnaPower);
+    // 1. Program analog prereqs before power sequencing.
+    status = WriteCodecRegisterAndVerify(CHIP_LINREG_CTRL, kCodecPlaybackLinRegCtrl, kCodecVerifyMaskAll);
     if (status != kStatus_Success)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
         return status;
     }
-    SDK_DelayAtLeastUs(20000U, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
 
-    // 2. Enable I2S_IN and DAC digital power
+    status = WriteCodecRegisterAndVerify(CHIP_REF_CTRL, kCodecPlaybackRefCtrl, kCodecVerifyMaskAll);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
+        return status;
+    }
+
+    // 2. Program analog power state and verify readback.
+    SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, kStatus_Success);
+    status = WriteCodecRegisterAndVerify(CHIP_ANA_POWER, kCodecPlaybackAnaPower, kCodecVerifyMaskAll);
+    if (status != kStatus_Success)
+    {
+        SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaPower, status);
+        return status;
+    }
+    SDK_DelayAtLeastUs(kCodecVagPowerDelayUs, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+
+    // 3. Enable digital/clocking path and verify each register.
     SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, kStatus_Success);
-    status = WriteCodecRegisterWithRetry(CHIP_DIG_POWER, kCodecPlaybackDigPower);
+    status = WriteCodecRegisterAndVerify(CHIP_DIG_POWER, kCodecPlaybackDigPower, kCodecVerifyMaskAll);
     if (status != kStatus_Success)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
         return status;
     }
 
-    status = WriteCodecRegisterWithRetry(CHIP_CLK_CTRL, kCodecPlaybackClkCtrl);
+    status = WriteCodecRegisterAndVerify(CHIP_CLK_CTRL, kCodecPlaybackClkCtrl, kCodecVerifyMaskAll);
     if (status != kStatus_Success)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
         return status;
     }
 
-    status = WriteCodecRegisterWithRetry(CHIP_I2S_CTRL, kCodecPlaybackI2sCtrl);
+    status = WriteCodecRegisterAndVerify(CHIP_I2S_CTRL, kCodecPlaybackI2sCtrl, kCodecVerifyMaskAll);
     if (status != kStatus_Success)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
         return status;
     }
 
-    status = WriteCodecRegisterWithRetry(CHIP_SSS_CTRL, kCodecPlaybackSssCtrl);
+    status = WriteCodecRegisterAndVerify(CHIP_SSS_CTRL, kCodecPlaybackSssCtrl, kCodecVerifyMaskAll);
     if (status != kStatus_Success)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDigPower, status);
         return status;
     }
 
-    // 3. Set HP volume
+    // 4. Program volume first.
     SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteHpVolume, kStatus_Success);
-    status = WriteCodecRegisterWithRetry(CHIP_ANA_HP_CTRL, kCodecDefaultHpVolume);
+    status = WriteCodecRegisterAndVerify(CHIP_ANA_HP_CTRL, kCodecDefaultHpVolume, kCodecVerifyMaskAll);
     if (status != kStatus_Success)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteHpVolume, status);
         return status;
     }
 
-    // 4. Set DAC volume
+    // 5. Set DAC volume.
     SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDacVolume, kStatus_Success);
-    status = WriteCodecRegisterWithRetry(CHIP_DAC_VOL, kCodecDefaultDacVolume);
+    status = WriteCodecRegisterAndVerify(CHIP_DAC_VOL, kCodecDefaultDacVolume, kCodecVerifyMaskAll);
     if (status != kStatus_Success)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteDacVolume, status);
         return status;
     }
 
-    // 5. Unmute DAC
+    // 6. Unmute DAC path.
     SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAdcDacCtrl, kStatus_Success);
-    status = WriteCodecRegisterWithRetry(CHIP_ADCDAC_CTRL, kCodecPlaybackAdcDacCtrl);
+    status = WriteCodecRegisterAndVerify(CHIP_ADCDAC_CTRL, kCodecPlaybackAdcDacCtrl, kCodecVerifyMaskAdcDacCtrl);
     if (status != kStatus_Success)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAdcDacCtrl, status);
         return status;
     }
 
-    // 6. Unmute headphone output
+    // 7. Route DAC to headphone and unmute.
     SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaCtrl, kStatus_Success);
-    status = WriteCodecRegisterWithRetry(CHIP_ANA_CTRL, kCodecPlaybackAnaCtrl);
+    status = WriteCodecRegisterAndVerify(CHIP_ANA_CTRL, kCodecPlaybackAnaCtrl, kCodecVerifyMaskAll);
     if (status != kStatus_Success)
     {
         SetPlaybackEnableProgress(kAudioCodecPlaybackEnableStepWriteAnaCtrl, status);
