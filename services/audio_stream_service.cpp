@@ -374,7 +374,7 @@ int32_t AudioStreamService_GenerateSineSample(void)
     const int32_t amplitude24 = AudioStreamService_GetScaledAmplitude24();
     const int32_t sampleValue = static_cast<int32_t>(std::sin(phase) * static_cast<float>(amplitude24));
 
-    g_audioStreamServiceState.generatedPhaseQ16 += g_audioStreamServiceState.generatedPhaseStepQ16;
+    g_audioStreamServiceState.generatedPhaseQ16 = (g_audioStreamServiceState.generatedPhaseQ16 + g_audioStreamServiceState.generatedPhaseStepQ16) & 0xFFFFU;
     return AudioStreamService_ScaleGeneratedSample(sampleValue, sampleIndex);
 }
 
@@ -392,7 +392,7 @@ int32_t AudioStreamService_GenerateChirpSample(void)
     const int32_t sampleValue = static_cast<int32_t>(std::sin(phase) * static_cast<float>(amplitude24));
 
     g_audioStreamServiceState.generatedPhaseStepQ16 = AudioStreamService_ComputePhaseStepQ16(static_cast<uint32_t>(currentFrequency));
-    g_audioStreamServiceState.generatedPhaseQ16 += g_audioStreamServiceState.generatedPhaseStepQ16;
+    g_audioStreamServiceState.generatedPhaseQ16 = (g_audioStreamServiceState.generatedPhaseQ16 + g_audioStreamServiceState.generatedPhaseStepQ16) & 0xFFFFU;
     return AudioStreamService_ScaleGeneratedSample(sampleValue, sampleIndex);
 }
 

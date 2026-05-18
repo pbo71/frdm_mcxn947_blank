@@ -100,6 +100,45 @@ Det betyder:
 - genbrug af eksisterende host- og device-kontrakter
 - ny funktionalitet implementeres internt bag kendte kommandoer
 
+## Implementeringsrækkefølge: Digital Loopback Før Hardware
+
+**Vigtig sekvensering:** Den digitale loopback skal implementeres og valideres **før** codec, I2S, DMA og analog audio-streaming bringes ind.
+
+### Fase 1: Digital Loopback Reference (ingen hardware)
+
+1. USB enumeration stabil
+2. Platform-neutrale services: audio header, stream service, playback buffer
+3. USB round-trip: device modtager og gendanner audio packets
+4. Metrics: stream health og buffer status
+5. Negative tests: bad header, format mismatch, sequence gaps
+
+**Output fra fase 1:** Valideret USB-protocol, kendt-godt referencepunkt
+
+### Fase 2: Hardware Integration (codec, I2S, DMA)
+
+Når digital loopback er stabil kan hardware tilføjes:
+
+1. I2S og SAI-konfiguration
+2. Codec initialisering og kontrol
+3. DMA audio-path
+4. Analog input/output
+
+**Fordele ved denne rækkefølge:**
+
+- USB-lagene er isoleret og valideret
+- Hvis der senere bliver problemer ved hardware-tilføjelse, ved du de er codec/I2S-relateret, ikke USB
+- Du har en kendt-god reference for senere debugging
+- Mindre risiko for at problemer opstår fra multiple kilder samtidig
+
+### Fase 3: Kapacitetsbygning
+
+Efter hardware-vej virker:
+
+1. Generator-moder
+2. Mikrofon capture
+3. Codec-input til USB
+4. Analog verifikation
+
 ## Anbefalet Intern API-retning
 
 Den nye kodebase bør have en lille intern API med tre ansvar.

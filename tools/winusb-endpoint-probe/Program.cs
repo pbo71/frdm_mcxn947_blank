@@ -387,7 +387,11 @@ internal static class Program
             }
 
             endpoints[pipeInfo.PipeId] = pipeInfo;
-            SetTimeout(winUsbHandle, pipeInfo.PipeId, DefaultTimeoutMs);
+            // PIPE_TRANSFER_TIMEOUT policy is not supported for isochronous pipes
+            if (pipeInfo.PipeType != UsbdPipeType.Isochronous)
+            {
+                SetTimeout(winUsbHandle, pipeInfo.PipeId, DefaultTimeoutMs);
+            }
         }
 
         return endpoints;

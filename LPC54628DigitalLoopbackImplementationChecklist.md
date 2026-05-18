@@ -6,9 +6,44 @@ Use it as a working checklist when lifting the reference design into the target 
 
 Related documents:
 
+- [LPC54628DigitalLoopbackDesignMemo.md](LPC54628DigitalLoopbackDesignMemo.md)
 - [DigitalLoopbackPortingGuideLPC54628.md](DigitalLoopbackPortingGuideLPC54628.md)
 - [DigitalLoopbackMeasurementSpec.md](DigitalLoopbackMeasurementSpec.md)
 - [DigitalLoopbackRegressionPack.md](DigitalLoopbackRegressionPack.md)
+
+## 0. Planning: Digital Loopback Before Hardware
+
+**Critical sequencing decision:** Start digital loopback implementation **before** bringing in codec, I2S, DMA, or audio-path hardware.
+
+### Why This Order?
+
+- **Isolate USB stack first** – validates protocol and packet round-trip without audio-hardware complexity
+- **Known-good reference** – when hardware is later added, you have a baseline to compare against
+- **Simpler debugging** – if issues arise after hardware integration, you know they are codec/I2S-related
+- **Phased risk** – problems from one layer are easier to identify and fix independently
+
+### Phase 1 Scope (This Checklist)
+
+Implement digital loopback reference mode **without** codec, I2S, DMA, or audio samples.
+
+Phase 1 success criteria:
+
+- USB enumeration stable
+- Stream start/stop via existing LPC protocol works
+- Audio packets echo back correctly
+- Sequence validation and counter logic proven
+- Negative tests (bad header, format mismatch, gaps) handled correctly
+
+### Phase 2 Planning (Future)
+
+After Phase 1 is complete and stable, plan Phase 2:
+
+- I2S / SAI configuration
+- Codec initialization and control
+- DMA audio paths
+- Analog input / output
+
+At that point, the digital loopback reference will serve as a baseline for validating the new hardware paths.
 
 ## 1. Define The Target Scope
 

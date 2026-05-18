@@ -25,9 +25,11 @@ typedef struct _usb_vendor_bulk_state
     uint8_t currentConfiguration;
     uint8_t cmdInBusy;
     uint8_t audioInBusy;
+    uint8_t isoAudioInBusy;
     uint8_t pendingCmdResponseValid;
     uint16_t cmdPacketSize;
     uint16_t audioPacketSize;
+    uint16_t isoAudioPacketSize;
     uint16_t pendingCmdResponseLength;
 } usb_vendor_bulk_state_t;
 
@@ -41,6 +43,8 @@ USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
 static uint8_t s_audioOutBuffer[USB_VENDOR_BULK_AUDIO_HS_MPS];
 USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
 static uint8_t s_audioInBuffer[USB_VENDOR_BULK_AUDIO_HS_MPS];
+USB_DMA_NONINIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
+static uint8_t s_isoAudioInBuffer[USB_VENDOR_BULK_ISO_AUDIO_HS_MPS];
 
 static usb_vendor_bulk_state_t s_vendorBulk;
 volatile usb_vendor_bulk_debug_state_t g_UsbVendorBulkDebug;
@@ -49,6 +53,7 @@ static usb_status_t USB_VendorBulkDeviceCallback(usb_device_handle handle, uint3
 static void USB_VendorBulkTrySendProtocolFrame(void);
 static void USB_VendorBulkTrySendPendingCommandResponse(void);
 static void USB_VendorBulkTrySendGeneratedAudioFrame(void);
+static void USB_VendorBulkTrySendIsoAudioFrame(void);
 
 static usb_device_class_config_list_struct_t s_vendorBulkClassConfigList = {
     .config = NULL,
@@ -92,6 +97,27 @@ static void USB_VendorBulkTrySendGeneratedAudioFrame(void)
 
     s_vendorBulk.audioInBusy = 1U;
     (void)USB_DeviceSendRequest(s_vendorBulk.deviceHandle, USB_VENDOR_BULK_EP_AUDIO_IN, s_audioInBuffer, txLen);
+}
+
+/* Isochronous IN endpoint – re-primed every callback regardless of data availability.
+ * A zero-length packet is sent when no audio data is ready so the host always
+ * receives something in each scheduled microframe interval. */
+static void USB_VendorBulkTrySendIsoAudioFrame(void)
+{
+    uint32_t txLen = 0U;
+
+    if (!s_vendorBulk.attach || s_vendorBulk.isoAudioInBusy)
+    {
+        return;
+    }
+
+    (void)AudioStreamService_TryBuildGeneratedPacket(s_isoAudioInBuffer, sizeof(s_isoAudioInBuffer), &txLen);
+
+    s_vendorBulk.isoAudioInBusy = 1U;
+    (void)USB_DeviceSendRequest(s_vendorBulk.deviceHandle,
+                                USB_VENDOR_BULK_EP_ISO_AUDIO_IN,
+                                s_isoAudioInBuffer,
+                                txLen);
 }
 
 /* Command endpoints are reserved for the control plane: commands in, responses/events out. */
@@ -199,6 +225,11 @@ static usb_status_t USB_VendorBulkEndpointCallback(usb_device_handle handle,
             USB_VendorBulkTrySendGeneratedAudioFrame();
             break;
 
+        case USB_VENDOR_BULK_EP_ISO_AUDIO_IN:
+            s_vendorBulk.isoAudioInBusy = 0U;
+            USB_VendorBulkTrySendIsoAudioFrame();
+            break;
+
         default:
             break;
     }
@@ -216,8 +247,9 @@ static usb_status_t USB_VendorBulkConfigureEndpoints(void)
     epCb.callbackFn = USB_VendorBulkEndpointCallback;
     epCb.isBusy     = 0U;
 
-    s_vendorBulk.cmdPacketSize = (s_vendorBulk.speed == USB_SPEED_HIGH) ? USB_VENDOR_BULK_CMD_HS_MPS : USB_VENDOR_BULK_CMD_FS_MPS;
-    s_vendorBulk.audioPacketSize = (s_vendorBulk.speed == USB_SPEED_HIGH) ? USB_VENDOR_BULK_AUDIO_HS_MPS : USB_VENDOR_BULK_AUDIO_FS_MPS;
+    s_vendorBulk.cmdPacketSize   = (s_vendorBulk.speed == USB_SPEED_HIGH) ? USB_VENDOR_BULK_CMD_HS_MPS        : USB_VENDOR_BULK_CMD_FS_MPS;
+    s_vendorBulk.audioPacketSize  = (s_vendorBulk.speed == USB_SPEED_HIGH) ? USB_VENDOR_BULK_AUDIO_HS_MPS      : USB_VENDOR_BULK_AUDIO_FS_MPS;
+    s_vendorBulk.isoAudioPacketSize = (s_vendorBulk.speed == USB_SPEED_HIGH) ? USB_VENDOR_BULK_ISO_AUDIO_HS_MPS : USB_VENDOR_BULK_ISO_AUDIO_FS_MPS;
 
     epInit.zlt = 0U;
     epInit.interval = 0U;
@@ -260,10 +292,25 @@ static usb_status_t USB_VendorBulkConfigureEndpoints(void)
         return kStatus_USB_Error;
     }
 
+    /* Isochronous async IN endpoint */
+    epInit.transferType    = USB_ENDPOINT_ISOCHRONOUS;
+    epInit.endpointAddress = USB_VENDOR_BULK_EP_ISO_AUDIO_IN;
+    epInit.maxPacketSize   = s_vendorBulk.isoAudioPacketSize;
+    epInit.interval        = (s_vendorBulk.speed == USB_SPEED_HIGH) ? 4U : 1U;
+    epCb.callbackParam     = (void *)(uintptr_t)USB_VENDOR_BULK_EP_ISO_AUDIO_IN;
+    if (USB_DeviceInitEndpoint(s_vendorBulk.deviceHandle, &epInit, &epCb) != kStatus_USB_Success)
+    {
+        g_UsbVendorBulkDebug.lastStatus = (uint32_t)kStatus_USB_Error;
+        return kStatus_USB_Error;
+    }
+
     (void)USB_DeviceRecvRequest(s_vendorBulk.deviceHandle, USB_VENDOR_BULK_EP_CMD_OUT, s_cmdOutBuffer,
                                 s_vendorBulk.cmdPacketSize);
     (void)USB_DeviceRecvRequest(s_vendorBulk.deviceHandle, USB_VENDOR_BULK_EP_AUDIO_OUT, s_audioOutBuffer,
                                 s_vendorBulk.audioPacketSize);
+
+    /* Prime the isochronous IN endpoint – must always be pre-queued */
+    USB_VendorBulkTrySendIsoAudioFrame();
 
     g_UsbVendorBulkDebug.stage = 0x4FU;
 
@@ -287,6 +334,7 @@ static usb_status_t USB_VendorBulkDeviceCallback(usb_device_handle handle, uint3
             s_vendorBulk.currentConfiguration = 0U;
             s_vendorBulk.cmdInBusy = 0U;
             s_vendorBulk.audioInBusy = 0U;
+            s_vendorBulk.isoAudioInBusy = 0U;
             s_vendorBulk.pendingCmdResponseValid = 0U;
             s_vendorBulk.pendingCmdResponseLength = 0U;
             AudioStreamService_OnTransportReset();
