@@ -22,8 +22,8 @@ struct AudioStreamServiceState
     uint32_t nextExpectedSequenceNumber;
     uint32_t generatedTimestamp;
     uint32_t sampleRateHz;
-    uint32_t generatedPhaseQ16;
-    uint32_t generatedPhaseStepQ16;
+    float generatedPhase;
+    float generatedPhaseStep;
     uint32_t generatedPrimaryFrequencyHz;
     uint32_t generatedSecondaryFrequencyHz;
     uint32_t generatedModulationPeriodMs;
@@ -48,8 +48,7 @@ constexpr uint32_t kGeneratedMaxPayloadBytes = 256U;
 constexpr uint32_t kGeneratedNoiseSeed = 0x13579BDFU;
 constexpr uint32_t kGeneratedDefaultModulationPeriodMs = 1000U;
 constexpr uint32_t kGeneratedMinModulationSamples = 16U;
-constexpr float kGeneratedPhaseScale = 65536.0F;
-constexpr float kGeneratedAngleScale = 6.28318530717958647692F / kGeneratedPhaseScale;
+constexpr float kTwoPi = 6.28318530717958647692F;
 constexpr uint16_t kGeneratedDefaultAmplitude = 12000U;
 constexpr int32_t kGeneratedMaxSample24 = 0x7FFFFF;
 constexpr int32_t kGeneratedMinSample24 = -0x800000;
@@ -193,8 +192,8 @@ void AudioStreamService_ResetGeneratedState(void)
     g_audioStreamServiceState.generatedFirstPacketPending = false;
     g_audioStreamServiceState.generatedPayloadBytes = 0U;
     g_audioStreamServiceState.generatedTimestamp = 0U;
-    g_audioStreamServiceState.generatedPhaseQ16 = 0U;
-    g_audioStreamServiceState.generatedPhaseStepQ16 = 0U;
+    g_audioStreamServiceState.generatedPhase = 0.0F;
+    g_audioStreamServiceState.generatedPhaseStep = 0.0F;
     g_audioStreamServiceState.generatedHeldNoiseSample = 0;
 }
 
@@ -229,15 +228,14 @@ uint32_t AudioStreamService_GetModulationPeriodSamples(void)
     return static_cast<uint32_t>(periodSamples);
 }
 
-uint32_t AudioStreamService_ComputePhaseStepQ16(uint32_t frequencyHz)
+float AudioStreamService_ComputePhaseStep(uint32_t frequencyHz)
 {
     if ((frequencyHz == 0U) || (g_audioStreamServiceState.sampleRateHz == 0U))
     {
-        return 0U;
+        return 0.0F;
     }
 
-    return static_cast<uint32_t>((static_cast<float>(frequencyHz) /
-                                  static_cast<float>(g_audioStreamServiceState.sampleRateHz)) * kGeneratedPhaseScale);
+    return kTwoPi * (static_cast<float>(frequencyHz) / static_cast<float>(g_audioStreamServiceState.sampleRateHz));
 }
 
 void AudioStreamService_ConfigureGeneratedState(void)
@@ -245,8 +243,8 @@ void AudioStreamService_ConfigureGeneratedState(void)
     g_audioStreamServiceState.generatedFirstPacketPending = true;
     g_audioStreamServiceState.generatedPayloadBytes = AudioStreamService_GetGeneratedPayloadBytes();
     g_audioStreamServiceState.generatedTimestamp = 0U;
-    g_audioStreamServiceState.generatedPhaseQ16 = 0U;
-    g_audioStreamServiceState.generatedPhaseStepQ16 = AudioStreamService_ComputePhaseStepQ16(
+    g_audioStreamServiceState.generatedPhase = 0.0F;
+    g_audioStreamServiceState.generatedPhaseStep = AudioStreamService_ComputePhaseStep(
         g_audioStreamServiceState.generatedPrimaryFrequencyHz);
     g_audioStreamServiceState.generatedNoiseState = g_audioStreamServiceState.generatedNoiseSeed;
     g_audioStreamServiceState.generatedHeldNoiseSample = 0;
@@ -369,12 +367,15 @@ int32_t AudioStreamService_ScaleGeneratedSample(int32_t sampleValue, uint32_t sa
 
 int32_t AudioStreamService_GenerateSineSample(void)
 {
-    const float phase = static_cast<float>(g_audioStreamServiceState.generatedPhaseQ16) * kGeneratedAngleScale;
     const uint32_t sampleIndex = g_audioStreamServiceState.generatedTimestamp;
     const int32_t amplitude24 = AudioStreamService_GetScaledAmplitude24();
-    const int32_t sampleValue = static_cast<int32_t>(std::sin(phase) * static_cast<float>(amplitude24));
+    const int32_t sampleValue = static_cast<int32_t>(sinf(g_audioStreamServiceState.generatedPhase) * static_cast<float>(amplitude24));
 
-    g_audioStreamServiceState.generatedPhaseQ16 = (g_audioStreamServiceState.generatedPhaseQ16 + g_audioStreamServiceState.generatedPhaseStepQ16) & 0xFFFFU;
+    g_audioStreamServiceState.generatedPhase += g_audioStreamServiceState.generatedPhaseStep;
+    if (g_audioStreamServiceState.generatedPhase >= kTwoPi)
+    {
+        g_audioStreamServiceState.generatedPhase -= kTwoPi;
+    }
     return AudioStreamService_ScaleGeneratedSample(sampleValue, sampleIndex);
 }
 
@@ -387,12 +388,15 @@ int32_t AudioStreamService_GenerateChirpSample(void)
     const float currentFrequency = static_cast<float>(g_audioStreamServiceState.generatedPrimaryFrequencyHz) +
                                    (static_cast<float>(g_audioStreamServiceState.generatedSecondaryFrequencyHz) -
                                     static_cast<float>(g_audioStreamServiceState.generatedPrimaryFrequencyHz)) * ratio;
-    const float phase = static_cast<float>(g_audioStreamServiceState.generatedPhaseQ16) * kGeneratedAngleScale;
     const int32_t amplitude24 = AudioStreamService_GetScaledAmplitude24();
-    const int32_t sampleValue = static_cast<int32_t>(std::sin(phase) * static_cast<float>(amplitude24));
+    const int32_t sampleValue = static_cast<int32_t>(sinf(g_audioStreamServiceState.generatedPhase) * static_cast<float>(amplitude24));
 
-    g_audioStreamServiceState.generatedPhaseStepQ16 = AudioStreamService_ComputePhaseStepQ16(static_cast<uint32_t>(currentFrequency));
-    g_audioStreamServiceState.generatedPhaseQ16 = (g_audioStreamServiceState.generatedPhaseQ16 + g_audioStreamServiceState.generatedPhaseStepQ16) & 0xFFFFU;
+    g_audioStreamServiceState.generatedPhaseStep = AudioStreamService_ComputePhaseStep(static_cast<uint32_t>(currentFrequency));
+    g_audioStreamServiceState.generatedPhase += g_audioStreamServiceState.generatedPhaseStep;
+    if (g_audioStreamServiceState.generatedPhase >= kTwoPi)
+    {
+        g_audioStreamServiceState.generatedPhase -= kTwoPi;
+    }
     return AudioStreamService_ScaleGeneratedSample(sampleValue, sampleIndex);
 }
 
