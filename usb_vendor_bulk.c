@@ -81,22 +81,11 @@ static void USB_VendorBulkTrySendPendingCommandResponse(void)
                                 s_vendorBulk.pendingCmdResponseLength);
 }
 
+/* Generated audio is routed exclusively to the isochronous endpoint (EP 0x83).
+ * EP 0x82 IN is kept alive only for the loopback-echo path via HandleAudioOutPacket. */
 static void USB_VendorBulkTrySendGeneratedAudioFrame(void)
 {
-    uint32_t txLen = 0U;
-
-    if (!s_vendorBulk.attach || s_vendorBulk.audioInBusy)
-    {
-        return;
-    }
-
-    if (!AudioStreamService_TryBuildGeneratedPacket(s_audioInBuffer, sizeof(s_audioInBuffer), &txLen) || (txLen == 0U))
-    {
-        return;
-    }
-
-    s_vendorBulk.audioInBusy = 1U;
-    (void)USB_DeviceSendRequest(s_vendorBulk.deviceHandle, USB_VENDOR_BULK_EP_AUDIO_IN, s_audioInBuffer, txLen);
+    (void)0;
 }
 
 /* Isochronous IN endpoint – re-primed every callback regardless of data availability.
@@ -492,5 +481,5 @@ void USB_VendorBulkNotifyTxPending(void)
 
 void USB_VendorBulkNotifyAudioTxPending(void)
 {
-    USB_VendorBulkTrySendGeneratedAudioFrame();
+    USB_VendorBulkTrySendIsoAudioFrame();
 }
