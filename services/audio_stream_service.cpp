@@ -44,7 +44,7 @@ AudioStreamServiceState g_audioStreamServiceState{};
 constexpr uint32_t kGeneratedToneFrequencyHz = 1000U;
 constexpr uint32_t kGeneratedChirpStartFrequencyHz = 500U;
 constexpr uint32_t kGeneratedChirpEndFrequencyHz = 4000U;
-constexpr uint32_t kGeneratedMaxPayloadBytes = 256U;
+constexpr uint32_t kGeneratedMaxPayloadBytes = 480U;
 constexpr uint32_t kGeneratedNoiseSeed = 0x13579BDFU;
 constexpr uint32_t kGeneratedDefaultModulationPeriodMs = 1000U;
 constexpr uint32_t kGeneratedMinModulationSamples = 16U;

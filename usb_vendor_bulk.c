@@ -81,11 +81,28 @@ static void USB_VendorBulkTrySendPendingCommandResponse(void)
                                 s_vendorBulk.pendingCmdResponseLength);
 }
 
-/* Generated audio is routed exclusively to the isochronous endpoint (EP 0x83).
- * EP 0x82 IN is kept alive only for the loopback-echo path via HandleAudioOutPacket. */
+/* Bulk IN fallback for generated audio so legacy host tools (reading EP 0x82)
+ * still receive frames when stream source is device-generated. */
 static void USB_VendorBulkTrySendGeneratedAudioFrame(void)
 {
-    (void)0;
+    uint32_t txLen = 0U;
+
+    if (!s_vendorBulk.attach || s_vendorBulk.audioInBusy)
+    {
+        return;
+    }
+
+    if (!AudioStreamService_TryBuildGeneratedPacket(s_audioInBuffer, sizeof(s_audioInBuffer), &txLen) ||
+        (txLen == 0U))
+    {
+        return;
+    }
+
+    s_vendorBulk.audioInBusy = 1U;
+    (void)USB_DeviceSendRequest(s_vendorBulk.deviceHandle,
+                                USB_VENDOR_BULK_EP_AUDIO_IN,
+                                s_audioInBuffer,
+                                txLen);
 }
 
 /* Isochronous IN endpoint – re-primed every callback regardless of data availability.
@@ -207,6 +224,7 @@ static usb_status_t USB_VendorBulkEndpointCallback(usb_device_handle handle,
             {
                 USB_VendorBulkTrySendProtocolFrame();
             }
+            USB_VendorBulkTrySendGeneratedAudioFrame();
             break;
 
         case USB_VENDOR_BULK_EP_AUDIO_IN:
@@ -285,7 +303,7 @@ static usb_status_t USB_VendorBulkConfigureEndpoints(void)
     epInit.transferType    = USB_ENDPOINT_ISOCHRONOUS;
     epInit.endpointAddress = USB_VENDOR_BULK_EP_ISO_AUDIO_IN;
     epInit.maxPacketSize   = s_vendorBulk.isoAudioPacketSize;
-    epInit.interval        = (s_vendorBulk.speed == USB_SPEED_HIGH) ? 4U : 1U;
+    epInit.interval        = (s_vendorBulk.speed == USB_SPEED_HIGH) ? 5U : 1U;
     epCb.callbackParam     = (void *)(uintptr_t)USB_VENDOR_BULK_EP_ISO_AUDIO_IN;
     if (USB_DeviceInitEndpoint(s_vendorBulk.deviceHandle, &epInit, &epCb) != kStatus_USB_Success)
     {
