@@ -22,7 +22,7 @@
         "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "$env{binaryDir}",
         "CMAKE_LIBRARY_OUTPUT_DIRECTORY": "$env{binaryDir}",
         "CMAKE_ARCHIVE_OUTPUT_DIRECTORY": "$env{binaryDir}",
-        "WEST": "TRUE",
+        "WEST": "powershell;-NoProfile;-ExecutionPolicy;Bypass;-File;${fileDir}/.vscode/flash-linkserver.ps1",
         "board": "frdmmcxn947",
         "core_id": "cm33_core0",
         "PrjRootDirPath": "${fileDir}//"
@@ -46,7 +46,7 @@
         "CMAKE_RUNTIME_OUTPUT_DIRECTORY": "$env{binaryDir}",
         "CMAKE_LIBRARY_OUTPUT_DIRECTORY": "$env{binaryDir}",
         "CMAKE_ARCHIVE_OUTPUT_DIRECTORY": "$env{binaryDir}",
-        "WEST": "TRUE",
+        "WEST": "powershell;-NoProfile;-ExecutionPolicy;Bypass;-File;${fileDir}/.vscode/flash-linkserver.ps1",
         "board": "frdmmcxn947",
         "core_id": "cm33_core0",
         "PrjRootDirPath": "${fileDir}//"

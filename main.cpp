@@ -8,6 +8,7 @@
 extern "C" {
 #include "board.h"
 #include "app.h"
+#include "fsl_common.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "alive_service.h"
@@ -21,10 +22,44 @@ extern "C" {
 void USB_DeviceClockInit(void);
 }
 
+namespace
+{
+[[noreturn]] void BootFailureResetLoop(void)
+{
+    for (;;)
+    {
+        // Blink quickly to indicate a boot-stage failure, then reset and retry.
+        for (int i = 0; i < 6; ++i)
+        {
+            LED_RED_TOGGLE();
+            SDK_DelayAtLeastUs(80000U, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+        }
+
+        NVIC_SystemReset();
+    }
+}
+}
+
 int main(void)
 {
     BOARD_InitHardware();
-    (void)AudioCodec_Init();
+
+    //constexpr int kCodecInitRetries = 4;
+    //status_t codecStatus = kStatus_Fail;
+    //for (int attempt = 0; attempt < kCodecInitRetries; ++attempt)
+    {
+        //codecStatus = AudioCodec_Init();
+        //if (codecStatus == kStatus_Success)
+        //{
+        //    break;
+        //}
+
+        //SDK_DelayAtLeastUs(120000U, SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
+    }
+
+    // Codec bring-up can be timing sensitive on cold boot.
+    // Continue boot even if codec init fails so USB/control plane still comes up.
+
     AudioPlaybackBuffer_Init();
     AudioStreamService_Init();
     ControlPlaneService_Init();
@@ -33,21 +68,15 @@ int main(void)
 
     if (AliveService_Start() != 0)
     {
-        for (;;)
-        {
-        }
+        BootFailureResetLoop();
     }
 
     if (AudioTxService_Start() != 0)
     {
-        for (;;)
-        {
-        }
+        BootFailureResetLoop();
     }
 
     vTaskStartScheduler();
 
-    for (;;)
-    {
-    }
+    BootFailureResetLoop();
 }
