@@ -20,13 +20,14 @@
 #define USB_VENDOR_BULK_CONFIG_INDEX   (1U)
 #define USB_VENDOR_BULK_INTERFACE_IDX  (0U)
 #define USB_VENDOR_BULK_INTERFACE_CNT  (1U)
-#define USB_VENDOR_BULK_ENDPOINT_COUNT (5U)
+#define USB_VENDOR_BULK_ENDPOINT_COUNT (6U)
 
-#define USB_VENDOR_BULK_EP_CMD_OUT      (0x01U)
-#define USB_VENDOR_BULK_EP_CMD_IN       (0x81U)
-#define USB_VENDOR_BULK_EP_AUDIO_OUT    (0x02U)
-#define USB_VENDOR_BULK_EP_AUDIO_IN     (0x82U)
-#define USB_VENDOR_BULK_EP_ISO_AUDIO_IN (0x83U)
+#define USB_VENDOR_BULK_EP_CMD_OUT       (0x01U)
+#define USB_VENDOR_BULK_EP_CMD_IN        (0x81U)
+#define USB_VENDOR_BULK_EP_AUDIO_OUT     (0x02U)
+#define USB_VENDOR_BULK_EP_AUDIO_IN      (0x82U)
+#define USB_VENDOR_BULK_EP_ISO_AUDIO_IN  (0x83U)
+#define USB_VENDOR_BULK_EP_ISO_AUDIO_OUT (0x03U)
 
 #define USB_VENDOR_BULK_CMD_FS_MPS       (64U)
 #define USB_VENDOR_BULK_CMD_HS_MPS       (512U)
@@ -37,6 +38,11 @@
  * bInterval = 4 → 2^(4-1) = 8 microframes = 1 ms period. */
 #define USB_VENDOR_BULK_ISO_AUDIO_FS_MPS (192U)
 #define USB_VENDOR_BULK_ISO_AUDIO_HS_MPS (512U)
+/* Isochronous OUT (host → device) mirrors the IN endpoint sizing so the same
+ * audio payload budget is available in both directions for the bulk-vs-iso
+ * comparison. */
+#define USB_VENDOR_BULK_ISO_AUDIO_OUT_FS_MPS (192U)
+#define USB_VENDOR_BULK_ISO_AUDIO_OUT_HS_MPS (512U)
 
 #define USB_VENDOR_BULK_MS_VENDOR_CODE (0x20U)
 #define USB_VENDOR_BULK_MS_OS_20_INDEX (0x0007U)

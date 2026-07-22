@@ -10,6 +10,24 @@ Transport split:
 - Large audio payloads belong on the audio bulk endpoints, not in command payloads.
 - Audio stream data uses its own dedicated audio header, not the command/event protocol header.
 
+Isochronous audio endpoints (bulk-vs-iso comparison):
+
+- `ISO AUDIO IN 0x83` and `ISO AUDIO OUT 0x03` carry the same audio stream data as `AUDIO IN 0x82` /
+  `AUDIO OUT 0x02`, but over USB Isochronous transfers instead of Bulk. They exist purely to compare
+  Bulk vs Isochronous transport behavior for the same audio content, using the same
+  `audio_stream_header_t` framing and `StartStream`/`StopStream` control-plane lifecycle.
+- Both iso endpoints use async isochronous attributes (no explicit feedback endpoint); this is a
+  simplified vendor-defined stream, not a USB Audio Class implementation.
+- `ISO AUDIO IN 0x83` is always kept pre-armed by the device: if a loopback response from
+  `ISO AUDIO OUT 0x03` is pending it is sent first, otherwise a device-generated audio packet is sent,
+  otherwise a zero-length packet is sent so the host always receives something on the scheduled
+  microframe interval.
+- `ISO AUDIO OUT 0x03` accepts host audio packets and produces a loopback response the same way
+  `AUDIO OUT 0x02` does (`AudioStreamService_HandleRxPacket`), but the response is staged for the next
+  `ISO AUDIO IN 0x83` send rather than transmitted immediately.
+- FS max packet size is `192` bytes (48 kHz 16-bit stereo, 1 ms); HS max packet size is `512` bytes,
+  both at a 1 ms service interval.
+
 Audio stream header layout:
 
 ```text

@@ -38,8 +38,8 @@ USB_DMA_INIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
 static uint8_t s_configDescriptorFs[] = {
     USB_DESCRIPTOR_LENGTH_CONFIGURE,
     USB_DESCRIPTOR_TYPE_CONFIGURE,
-    USB_SHORT_GET_LOW(53U),
-    USB_SHORT_GET_HIGH(53U),
+    USB_SHORT_GET_LOW(60U),
+    USB_SHORT_GET_HIGH(60U),
     USB_VENDOR_BULK_INTERFACE_CNT,
     USB_VENDOR_BULK_CONFIG_INDEX,
     0x00U,
@@ -103,14 +103,23 @@ static uint8_t s_configDescriptorFs[] = {
     USB_SHORT_GET_LOW(USB_VENDOR_BULK_ISO_AUDIO_FS_MPS),
     USB_SHORT_GET_HIGH(USB_VENDOR_BULK_ISO_AUDIO_FS_MPS),
     0x01U, /* bInterval = 1 → every 1 ms frame (FS) */
+
+    /* Isochronous async OUT – custom audio stream (host → device) */
+    USB_DESCRIPTOR_LENGTH_ENDPOINT,
+    USB_DESCRIPTOR_TYPE_ENDPOINT,
+    USB_VENDOR_BULK_EP_ISO_AUDIO_OUT,
+    USB_ENDPOINT_ISOCHRONOUS | 0x04U, /* bmAttributes: iso + async (bits 3:2 = 01) */
+    USB_SHORT_GET_LOW(USB_VENDOR_BULK_ISO_AUDIO_OUT_FS_MPS),
+    USB_SHORT_GET_HIGH(USB_VENDOR_BULK_ISO_AUDIO_OUT_FS_MPS),
+    0x01U, /* bInterval = 1 → every 1 ms frame (FS) */
 };
 
 USB_DMA_INIT_DATA_ALIGN(USB_DATA_ALIGN_SIZE)
 static uint8_t s_configDescriptorHs[] = {
     USB_DESCRIPTOR_LENGTH_CONFIGURE,
     USB_DESCRIPTOR_TYPE_CONFIGURE,
-    USB_SHORT_GET_LOW(53U),
-    USB_SHORT_GET_HIGH(53U),
+    USB_SHORT_GET_LOW(60U),
+    USB_SHORT_GET_HIGH(60U),
     USB_VENDOR_BULK_INTERFACE_CNT,
     USB_VENDOR_BULK_CONFIG_INDEX,
     0x00U,
@@ -173,6 +182,15 @@ static uint8_t s_configDescriptorHs[] = {
     USB_ENDPOINT_ISOCHRONOUS | 0x04U, /* bmAttributes: iso + async (bits 3:2 = 01) */
     USB_SHORT_GET_LOW(USB_VENDOR_BULK_ISO_AUDIO_HS_MPS),
     USB_SHORT_GET_HIGH(USB_VENDOR_BULK_ISO_AUDIO_HS_MPS),
+    0x04U, /* bInterval = 4 → 2^(4-1) = 8 microframes = 1 ms period (HS) */
+
+    /* Isochronous async OUT – custom audio stream (host → device) */
+    USB_DESCRIPTOR_LENGTH_ENDPOINT,
+    USB_DESCRIPTOR_TYPE_ENDPOINT,
+    USB_VENDOR_BULK_EP_ISO_AUDIO_OUT,
+    USB_ENDPOINT_ISOCHRONOUS | 0x04U, /* bmAttributes: iso + async (bits 3:2 = 01) */
+    USB_SHORT_GET_LOW(USB_VENDOR_BULK_ISO_AUDIO_OUT_HS_MPS),
+    USB_SHORT_GET_HIGH(USB_VENDOR_BULK_ISO_AUDIO_OUT_HS_MPS),
     0x04U, /* bInterval = 4 → 2^(4-1) = 8 microframes = 1 ms period (HS) */
 };
 

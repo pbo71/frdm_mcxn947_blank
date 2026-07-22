@@ -22,7 +22,9 @@ internal static class Program
     private const string StreamCodecProbeRunMode = "stream-codec-probe";
     private const string PlaybackAudibleRunMode = "playback-audible";
     private const string IsoAudioRunMode = "iso-audio";
+    private const string IsoLoopbackRunMode = "iso-loopback";
     private const byte IsoAudioInPipe = 0x83;
+    private const byte IsoAudioOutPipe = 0x03;
     private const int IsoPacketsPerTransfer = 16;   // 16 ms per WinUSB call (1 packet per 1 ms at HS)
     private const int IsoTransferRounds = 62;       // ~1 second total
     private const int IsoPacketDescriptorSize = 12; // sizeof(USBD_ISO_PACKET_DESCRIPTOR)
@@ -210,7 +212,8 @@ internal static class Program
             !string.Equals(runMode, CodecPlaybackSequenceRunMode, StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(runMode, StreamCodecProbeRunMode, StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(runMode, PlaybackAudibleRunMode, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(runMode, IsoAudioRunMode, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(runMode, IsoAudioRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, IsoLoopbackRunMode, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"Unsupported run mode: {runMode}");
         }
@@ -513,6 +516,12 @@ internal static class Program
             return;
         }
 
+        if (string.Equals(runMode, IsoLoopbackRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunIsoAudioLoopbackDemo(winUsbHandle, endpoints, maxPacket);
+            return;
+        }
+
         if (endpoints.ContainsKey(AudioOutPipe) && endpoints.ContainsKey(AudioInPipe))
         {
             var startStreamResponse = ExecuteCommand(winUsbHandle,
@@ -795,6 +804,168 @@ internal static class Program
         ValidateResponseStatus(stopResp, 0, "StopStream (iso)");
         Console.WriteLine($"StopStream: {DescribeFrame(stopResp)}");
         DrainProtocolEvents(winUsbHandle, cmdMaxPacket, DrainEventAttemptsAfterStop, "Iso post-stop");
+    }
+
+    /// <summary>
+    /// Symmetric bulk-vs-iso comparison: sends host loopback audio on the isochronous OUT
+    /// endpoint (0x03) and reads the device's loopback response on the isochronous IN
+    /// endpoint (0x83), mirroring RunAudioLoopbackDemo's bulk EP 0x02/0x82 round trip.
+    /// </summary>
+    private static void RunIsoAudioLoopbackDemo(IntPtr winUsbHandle, Dictionary<byte, WinUsbPipeInformation> endpoints, ushort cmdMaxPacket)
+    {
+        if (!endpoints.ContainsKey(IsoAudioInPipe) || !endpoints.ContainsKey(IsoAudioOutPipe))
+        {
+            Console.WriteLine("Skipping iso loopback demo: iso IN 0x83 or iso OUT 0x03 pipe not present.");
+            return;
+        }
+
+        Console.WriteLine("=== Isochronous Audio Loopback Demo (EP 0x03 -> EP 0x83) ===");
+
+        var startResp = ExecuteCommand(winUsbHandle, cmdMaxPacket, 910, 0x05,
+            BuildStartStreamPayload(LoopbackSampleRateHz, LoopbackChannelCount, LoopbackContainerBitsPerSample, AudioSourceHostRxLoopback));
+        ValidateResponseStatus(startResp, 0, "StartStream (iso loopback)");
+        Console.WriteLine($"StartStream: {DescribeFrame(startResp)}");
+
+        var outMaxPacket = endpoints[IsoAudioOutPipe].MaximumPacketSize;
+        var inMaxPacket = endpoints[IsoAudioInPipe].MaximumPacketSize;
+        var outBytesPerTransfer = (uint)IsoPacketsPerTransfer * outMaxPacket;
+        var inBytesPerTransfer = (uint)IsoPacketsPerTransfer * inMaxPacket;
+
+        var outBuffer = new byte[outBytesPerTransfer];
+        var inBuffer = new byte[inBytesPerTransfer];
+        var outGcHandle = GCHandle.Alloc(outBuffer, GCHandleType.Pinned);
+        var inGcHandle = GCHandle.Alloc(inBuffer, GCHandleType.Pinned);
+        IntPtr outBufPtr = outGcHandle.AddrOfPinnedObject();
+        IntPtr inBufPtr = inGcHandle.AddrOfPinnedObject();
+
+        IntPtr outIsochHandle = IntPtr.Zero;
+        IntPtr inIsochHandle = IntPtr.Zero;
+        IntPtr inDescsMem = Marshal.AllocHGlobal(IsoPacketsPerTransfer * IsoPacketDescriptorSize);
+        IntPtr outOverlappedMem = Marshal.AllocHGlobal(NativeOverlappedSize);
+        IntPtr inOverlappedMem = Marshal.AllocHGlobal(NativeOverlappedSize);
+        IntPtr outEventHandle = CreateEvent(IntPtr.Zero, true, false, IntPtr.Zero);
+        IntPtr inEventHandle = CreateEvent(IntPtr.Zero, true, false, IntPtr.Zero);
+
+        try
+        {
+            if (!WinUsb_RegisterIsochBuffer(winUsbHandle, IsoAudioOutPipe, outBufPtr, outBytesPerTransfer, out outIsochHandle))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "WinUsb_RegisterIsochBuffer (OUT) failed");
+
+            if (!WinUsb_RegisterIsochBuffer(winUsbHandle, IsoAudioInPipe, inBufPtr, inBytesPerTransfer, out inIsochHandle))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "WinUsb_RegisterIsochBuffer (IN) failed");
+
+            uint totalEchoedBytes = 0u;
+            int totalEchoedPackets = 0;
+            uint sequenceNumber = 0u;
+
+            // WinUsb_WriteIsochPipeAsap splits `Length` evenly into fixed `outMaxPacket`-sized packets,
+            // so the device always receives exactly `outMaxPacket` bytes per iso OUT packet (never a
+            // short transfer). AudioStreamService_HandleRxPacket requires headerSize + payloadBytes to
+            // match the received length exactly, so the payload must be built to fill the packet fully
+            // (frame-aligned) rather than fit-with-zero-padding like the bulk loopback demo does.
+            var bytesPerFrame = LoopbackChannelCount * (LoopbackContainerBitsPerSample / 8);
+            var loopbackFrameCount = (outMaxPacket - AudioHeaderSize) / bytesPerFrame;
+
+            for (int round = 0; round < IsoTransferRounds; round++)
+            {
+                // The OUT transfer's single packet slot must be entirely filled by one audio packet
+                // (header + full-size payload) so its length matches outMaxPacket exactly.
+                Array.Clear(outBuffer, 0, outBuffer.Length);
+                var payload = BuildLoopbackPayload(frameCount: loopbackFrameCount, seed: round * 17, channelCount: LoopbackChannelCount);
+                var flags = (round == 0) ? AudioFlagStartOfStream : (ushort)0;
+                var audioPacket = BuildAudioPacket(sequenceNumber,
+                                                   sequenceNumber * 160U,
+                                                   LoopbackSampleRateHz,
+                                                   LoopbackChannelCount,
+                                                   LoopbackContainerBitsPerSample,
+                                                   flags,
+                                                   payload);
+                if (audioPacket.Length > outMaxPacket)
+                {
+                    throw new InvalidOperationException(
+                        $"Iso loopback packet ({audioPacket.Length} bytes) exceeds OUT max packet size ({outMaxPacket}).");
+                }
+
+                audioPacket.CopyTo(outBuffer, 0);
+                sequenceNumber++;
+
+                for (int b = 0; b < NativeOverlappedSize; b++)
+                    Marshal.WriteByte(outOverlappedMem, b, 0);
+                Marshal.WriteIntPtr(outOverlappedMem, 24, outEventHandle);
+                ResetEvent(outEventHandle);
+
+                bool writeSubmitted = WinUsb_WriteIsochPipeAsap(outIsochHandle, 0u, outBytesPerTransfer, round > 0, outOverlappedMem);
+                int writeErr = Marshal.GetLastWin32Error();
+                if (!writeSubmitted && writeErr != ErrorIoPending)
+                    throw new Win32Exception(writeErr, $"WinUsb_WriteIsochPipeAsap failed (round {round})");
+
+                for (int b = 0; b < NativeOverlappedSize; b++)
+                    Marshal.WriteByte(inOverlappedMem, b, 0);
+                Marshal.WriteIntPtr(inOverlappedMem, 24, inEventHandle);
+                for (int b = 0; b < IsoPacketsPerTransfer * IsoPacketDescriptorSize; b++)
+                    Marshal.WriteByte(inDescsMem, b, 0);
+                ResetEvent(inEventHandle);
+
+                bool readSubmitted = WinUsb_ReadIsochPipeAsap(inIsochHandle, 0u, inBytesPerTransfer, round > 0,
+                    (uint)IsoPacketsPerTransfer, inDescsMem, inOverlappedMem);
+                int readErr = Marshal.GetLastWin32Error();
+                if (!readSubmitted && readErr != ErrorIoPending)
+                    throw new Win32Exception(readErr, $"WinUsb_ReadIsochPipeAsap failed (round {round})");
+
+                if (WaitForSingleObject(outEventHandle, TransferTimeoutMs) != WaitObject0)
+                    throw new TimeoutException($"Iso OUT transfer timed out on round {round}");
+                if (WaitForSingleObject(inEventHandle, TransferTimeoutMs) != WaitObject0)
+                    throw new TimeoutException($"Iso IN transfer timed out on round {round}");
+
+                int roundEchoedPackets = 0;
+                uint roundEchoedBytes = 0u;
+                for (int p = 0; p < IsoPacketsPerTransfer; p++)
+                {
+                    IntPtr desc = IntPtr.Add(inDescsMem, p * IsoPacketDescriptorSize);
+                    uint pktLen = (uint)Marshal.ReadInt32(desc, 4);
+                    int pktStatus = Marshal.ReadInt32(desc, 8);
+                    if (pktStatus == 0 && pktLen >= AudioHeaderSize)
+                    {
+                        roundEchoedPackets++;
+                        roundEchoedBytes += pktLen;
+                    }
+                }
+
+                totalEchoedPackets += roundEchoedPackets;
+                totalEchoedBytes += roundEchoedBytes;
+
+                if (round % 10 == 0 || round == IsoTransferRounds - 1)
+                {
+                    Console.WriteLine(
+                        $"  Round {round + 1,3}/{IsoTransferRounds}: sent 1 loopback packet, " +
+                        $"received {roundEchoedPackets}/{IsoPacketsPerTransfer} packets with audio, " +
+                        $"{roundEchoedBytes} bytes");
+                }
+            }
+
+            Console.WriteLine(
+                $"Total echoed: {totalEchoedPackets}/{IsoTransferRounds * IsoPacketsPerTransfer} packets with data, " +
+                $"{totalEchoedBytes} bytes (~{totalEchoedBytes / 1000} kB)");
+        }
+        finally
+        {
+            if (outIsochHandle != IntPtr.Zero)
+                WinUsb_UnregisterIsochBuffer(outIsochHandle);
+            if (inIsochHandle != IntPtr.Zero)
+                WinUsb_UnregisterIsochBuffer(inIsochHandle);
+            Marshal.FreeHGlobal(inDescsMem);
+            Marshal.FreeHGlobal(outOverlappedMem);
+            Marshal.FreeHGlobal(inOverlappedMem);
+            CloseHandle(outEventHandle);
+            CloseHandle(inEventHandle);
+            outGcHandle.Free();
+            inGcHandle.Free();
+        }
+
+        var stopResp = ExecuteCommand(winUsbHandle, cmdMaxPacket, 911, 0x06, Array.Empty<byte>());
+        ValidateResponseStatus(stopResp, 0, "StopStream (iso loopback)");
+        Console.WriteLine($"StopStream: {DescribeFrame(stopResp)}");
+        DrainProtocolEvents(winUsbHandle, cmdMaxPacket, DrainEventAttemptsAfterStop, "Iso loopback post-stop");
     }
 
     private static void RunGeneratedSmokeDemo(IntPtr winUsbHandle, Dictionary<byte, WinUsbPipeInformation> endpoints, ushort maxPacket)
@@ -2633,6 +2804,13 @@ internal static class Program
     private static extern bool WinUsb_ReadIsochPipeAsap(IntPtr isochBufferHandle, uint offset, uint length,
         [MarshalAs(UnmanagedType.Bool)] bool continueStream, uint numberOfPackets,
         IntPtr isoPacketDescriptors, IntPtr overlapped);
+
+    // NOTE: WinUsb_WriteIsochPipeAsap has no explicit packet-count/descriptor parameters for OUT transfers;
+    // the driver splits `length` evenly using the pipe's negotiated max packet size (same value used to size
+    // the read side). Validate this signature against real hardware behavior before relying on it further.
+    [DllImport("winusb.dll", SetLastError = true)]
+    private static extern bool WinUsb_WriteIsochPipeAsap(IntPtr isochBufferHandle, uint offset, uint length,
+        [MarshalAs(UnmanagedType.Bool)] bool continueStream, IntPtr overlapped);
 
     [DllImport("winusb.dll", SetLastError = true)]
     private static extern bool WinUsb_UnregisterIsochBuffer(IntPtr isochBufferHandle);
