@@ -97,6 +97,8 @@ Commands:
 - `7` `SetGeneratorConfig`
 - `8` `I2cWriteRegister`
 - `9` `I2cReadRegister`
+- `10` `GetVersion`
+- `11` `GetProtocolVersion`
 
 StartStream sources:
 
@@ -122,6 +124,8 @@ Response payloads:
 | Command | Response `opcode` | Response payload |
 | --- | --- | --- |
 | `GetInfo` | `GetInfo` | `GetInfoResponsePayload { u16 protocolVersion, u16 maxCommandPacketSize, u32 capabilities }` |
+| `GetVersion` | `GetVersion` | `GetVersionResponsePayload { u8 major, u8 minor, u8 patch, u8 reserved }` |
+| `GetProtocolVersion` | `GetProtocolVersion` | `GetProtocolVersionResponsePayload { u8 major, u8 minor }` |
 | `SetLed` | `SetLed` | `SetLedResponsePayload { u8 appliedAction, u8 reserved0, u16 reserved1 }` |
 | `GetUsbDebugState` | `GetUsbDebugState` | `GetUsbDebugStateResponsePayload { stage, lastEvent, lastStatus, usbSpeed, oversizedOutboundDropCount, setupBmRequestType, setupBRequest, setupWValue, setupWIndex, setupWLength, playbackFillLevelBytes, playbackMinFillLevelBytes, playbackMaxFillLevelBytes, playbackUnderrunCount, playbackOverrunCount, playbackDroppedBytes, discontinuityCount }` |
 | `Ping` | `Ping` | Same bytes as command payload, echoed unchanged |

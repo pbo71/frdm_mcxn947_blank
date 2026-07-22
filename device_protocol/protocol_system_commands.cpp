@@ -79,6 +79,42 @@ uint32_t HandleGetInfo(const ProtocolState &state, uint16_t sequence, uint8_t *r
                       responseCapacity);
 }
 
+uint32_t HandleGetVersion(uint16_t sequence, uint8_t *responseBuffer, uint32_t responseCapacity)
+{
+    GetVersionResponsePayload payload{};
+
+    payload.major = 1U;
+    payload.minor = 0U;
+    payload.patch = 0U;
+    payload.reserved = 0U;
+
+    return BuildFrame(FrameType::Response,
+                      static_cast<uint8_t>(CommandId::GetVersion),
+                      StatusCode::Ok,
+                      sequence,
+                      &payload,
+                      sizeof(payload),
+                      responseBuffer,
+                      responseCapacity);
+}
+
+uint32_t HandleGetProtocolVersion(uint16_t sequence, uint8_t *responseBuffer, uint32_t responseCapacity)
+{
+    GetProtocolVersionResponsePayload payload{};
+
+    payload.major = 1U;
+    payload.minor = 0U;
+
+    return BuildFrame(FrameType::Response,
+                      static_cast<uint8_t>(CommandId::GetProtocolVersion),
+                      StatusCode::Ok,
+                      sequence,
+                      &payload,
+                      sizeof(payload),
+                      responseBuffer,
+                      responseCapacity);
+}
+
 uint32_t HandleGetUsbDebugState(uint16_t sequence, uint8_t *responseBuffer, uint32_t responseCapacity)
 {
     GetUsbDebugStateResponsePayload payload{};
@@ -390,6 +426,28 @@ uint32_t DispatchSystemCommand(const ProtocolState &state,
                                           responseCapacity);
             }
             return HandleGetInfo(state, sequence, responseBuffer, responseCapacity);
+
+        case CommandId::GetVersion:
+            if (payloadLength != 0U)
+            {
+                return BuildErrorResponse(StatusCode::InvalidLength,
+                                          sequence,
+                                          static_cast<uint8_t>(commandId),
+                                          responseBuffer,
+                                          responseCapacity);
+            }
+            return HandleGetVersion(sequence, responseBuffer, responseCapacity);
+
+        case CommandId::GetProtocolVersion:
+            if (payloadLength != 0U)
+            {
+                return BuildErrorResponse(StatusCode::InvalidLength,
+                                          sequence,
+                                          static_cast<uint8_t>(commandId),
+                                          responseBuffer,
+                                          responseCapacity);
+            }
+            return HandleGetProtocolVersion(sequence, responseBuffer, responseCapacity);
 
         case CommandId::GetUsbDebugState:
             if (payloadLength != 0U)

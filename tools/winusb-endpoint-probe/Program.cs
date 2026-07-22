@@ -443,8 +443,14 @@ internal static class Program
         var getInfoResponse = ExecuteCommand(winUsbHandle, maxPacket, 2, 0x01, Array.Empty<byte>());
         Console.WriteLine($"GetInfo response: {DescribeFrame(getInfoResponse)}");
 
+        var getVersionResponse = ExecuteCommand(winUsbHandle, maxPacket, 3, 0x0A, Array.Empty<byte>());
+        Console.WriteLine($"GetVersion response: {DescribeFrame(getVersionResponse)}");
+
+        var getProtocolVersionResponse = ExecuteCommand(winUsbHandle, maxPacket, 4, 0x0B, Array.Empty<byte>());
+        Console.WriteLine($"GetProtocolVersion response: {DescribeFrame(getProtocolVersionResponse)}");
+
         var pingPayload = Encoding.ASCII.GetBytes("hello-from-pc");
-        var pingResponse = ExecuteCommand(winUsbHandle, maxPacket, 3, 0x04, pingPayload);
+        var pingResponse = ExecuteCommand(winUsbHandle, maxPacket, 5, 0x04, pingPayload);
         Console.WriteLine($"Ping response: {DescribeFrame(pingResponse)}");
 
         if (string.Equals(runMode, GeneratedSmokeRunMode, StringComparison.OrdinalIgnoreCase))
@@ -2034,6 +2040,8 @@ internal static class Program
         return frame.Opcode switch
         {
             0x01 => DescribeGetInfo(frame),
+            0x0A => DescribeGetVersion(frame),
+            0x0B => DescribeGetProtocolVersion(frame),
             0x05 => DescribeStartStream(frame),
             0x06 => DescribeStopStream(frame),
             0x07 => DescribeSetGeneratorConfig(frame),
@@ -2058,6 +2066,33 @@ internal static class Program
         var capabilities = BinaryPrimitives.ReadUInt32LittleEndian(frame.Payload.AsSpan(4, 4));
 
         return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} protocolVersion={protocolVersion} maxPacket={maxPacket} capabilities=0x{capabilities:X8}";
+    }
+
+    private static string DescribeGetVersion(ProtocolFrame frame)
+    {
+        if (frame.Payload.Length != 4)
+        {
+            return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} payload={Convert.ToHexString(frame.Payload)}";
+        }
+
+        var major = frame.Payload[0];
+        var minor = frame.Payload[1];
+        var patch = frame.Payload[2];
+
+        return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} version={major}.{minor}.{patch}";
+    }
+
+    private static string DescribeGetProtocolVersion(ProtocolFrame frame)
+    {
+        if (frame.Payload.Length != 2)
+        {
+            return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} payload={Convert.ToHexString(frame.Payload)}";
+        }
+
+        var major = frame.Payload[0];
+        var minor = frame.Payload[1];
+
+        return $"response {GetOpcodeName(frame.Opcode)} seq={frame.Sequence} status={GetStatusName(frame.Status)} protocolVersion={major}.{minor}";
     }
 
     private static string DescribeSetLed(ProtocolFrame frame)
@@ -2379,6 +2414,8 @@ internal static class Program
             0x07 => "SetGeneratorConfig",
             0x08 => "I2cWriteRegister",
             0x09 => "I2cReadRegister",
+            0x0A => "GetVersion",
+            0x0B => "GetProtocolVersion",
             _ => "UnknownOpcode",
         };
     }

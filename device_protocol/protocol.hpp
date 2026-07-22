@@ -43,6 +43,8 @@ enum class CommandId : uint8_t
     SetGeneratorConfig = 7U,
     I2cWriteRegister = 8U,
     I2cReadRegister = 9U,
+    GetVersion = 10U,
+    GetProtocolVersion = 11U,
 };
 
 enum class EventId : uint8_t
@@ -122,6 +124,20 @@ struct DEVICE_PROTOCOL_PACKED GetInfoResponsePayload
     uint16_t protocolVersion;
     uint16_t maxCommandPacketSize;
     uint32_t capabilities;
+};
+
+struct DEVICE_PROTOCOL_PACKED GetVersionResponsePayload
+{
+    uint8_t major;
+    uint8_t minor;
+    uint8_t patch;
+    uint8_t reserved;
+};
+
+struct DEVICE_PROTOCOL_PACKED GetProtocolVersionResponsePayload
+{
+    uint8_t major;
+    uint8_t minor;
 };
 
 struct DEVICE_PROTOCOL_PACKED SetLedCommandPayload
@@ -264,6 +280,8 @@ struct DEVICE_PROTOCOL_PACKED GetUsbDebugStateResponsePayload
 };
 
 static_assert(sizeof(GetInfoResponsePayload) == 8U, "GetInfo response payload must remain 8 bytes.");
+static_assert(sizeof(GetVersionResponsePayload) == 4U, "GetVersion response payload must remain 4 bytes.");
+static_assert(sizeof(GetProtocolVersionResponsePayload) == 2U, "GetProtocolVersion response payload must remain 2 bytes.");
 static_assert(sizeof(SetLedCommandPayload) == 1U, "SetLed command payload must remain 1 byte.");
 static_assert(sizeof(SetLedResponsePayload) == 4U, "SetLed response payload must remain 4 bytes.");
 static_assert(sizeof(StartStreamCommandPayload) == 8U, "StartStream command payload must remain 8 bytes.");

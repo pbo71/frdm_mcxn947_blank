@@ -70,6 +70,8 @@ uint32_t ParseAndDispatchCommand(const ProtocolState &state,
     switch (commandId)
     {
         case CommandId::GetInfo:
+        case CommandId::GetVersion:
+        case CommandId::GetProtocolVersion:
         case CommandId::GetUsbDebugState:
         case CommandId::Ping:
         case CommandId::StartStream:
