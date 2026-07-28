@@ -23,6 +23,8 @@ internal static class Program
     private const string PlaybackAudibleRunMode = "playback-audible";
     private const string IsoAudioRunMode = "iso-audio";
     private const string IsoLoopbackRunMode = "iso-loopback";
+    private const string BulkVsIsoCompareRunMode = "bulk-vs-iso";
+    private const int CompareRoundCount = 100;
     private const byte IsoAudioInPipe = 0x83;
     private const byte IsoAudioOutPipe = 0x03;
     private const int IsoPacketsPerTransfer = 16;   // 16 ms per WinUSB call (1 packet per 1 ms at HS)
@@ -213,7 +215,8 @@ internal static class Program
             !string.Equals(runMode, StreamCodecProbeRunMode, StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(runMode, PlaybackAudibleRunMode, StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(runMode, IsoAudioRunMode, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(runMode, IsoLoopbackRunMode, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(runMode, IsoLoopbackRunMode, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(runMode, BulkVsIsoCompareRunMode, StringComparison.OrdinalIgnoreCase))
         {
             throw new ArgumentException($"Unsupported run mode: {runMode}");
         }
@@ -519,6 +522,12 @@ internal static class Program
         if (string.Equals(runMode, IsoLoopbackRunMode, StringComparison.OrdinalIgnoreCase))
         {
             RunIsoAudioLoopbackDemo(winUsbHandle, endpoints, maxPacket);
+            return;
+        }
+
+        if (string.Equals(runMode, BulkVsIsoCompareRunMode, StringComparison.OrdinalIgnoreCase))
+        {
+            RunBulkVsIsoComparisonDemo(winUsbHandle, endpoints, maxPacket);
             return;
         }
 
@@ -966,6 +975,273 @@ internal static class Program
         ValidateResponseStatus(stopResp, 0, "StopStream (iso loopback)");
         Console.WriteLine($"StopStream: {DescribeFrame(stopResp)}");
         DrainProtocolEvents(winUsbHandle, cmdMaxPacket, DrainEventAttemptsAfterStop, "Iso loopback post-stop");
+    }
+
+    private readonly struct TransportComparisonResult
+    {
+        public TransportComparisonResult(string label, int roundsAttempted, int roundsEchoed,
+                                         double avgLatencyMs, double minLatencyMs, double maxLatencyMs,
+                                         double throughputKBps)
+        {
+            Label = label;
+            RoundsAttempted = roundsAttempted;
+            RoundsEchoed = roundsEchoed;
+            AvgLatencyMs = avgLatencyMs;
+            MinLatencyMs = minLatencyMs;
+            MaxLatencyMs = maxLatencyMs;
+            ThroughputKBps = throughputKBps;
+        }
+
+        public string Label { get; }
+        public int RoundsAttempted { get; }
+        public int RoundsEchoed { get; }
+        public double AvgLatencyMs { get; }
+        public double MinLatencyMs { get; }
+        public double MaxLatencyMs { get; }
+        public double ThroughputKBps { get; }
+    }
+
+    private static TransportComparisonResult BuildComparisonResult(string label, int roundsAttempted,
+                                                                    List<double> latenciesMs, long totalBytes)
+    {
+        var roundsEchoed = latenciesMs.Count;
+        var avgLatencyMs = roundsEchoed > 0 ? latenciesMs.Average() : 0.0;
+        var minLatencyMs = roundsEchoed > 0 ? latenciesMs.Min() : 0.0;
+        var maxLatencyMs = roundsEchoed > 0 ? latenciesMs.Max() : 0.0;
+        var totalSeconds = latenciesMs.Sum() / 1000.0;
+        var throughputKBps = totalSeconds > 0 ? (totalBytes / 1024.0) / totalSeconds : 0.0;
+
+        return new TransportComparisonResult(label, roundsAttempted, roundsEchoed, avgLatencyMs, minLatencyMs,
+                                             maxLatencyMs, throughputKBps);
+    }
+
+    private static void PrintComparisonTable(IEnumerable<TransportComparisonResult> results)
+    {
+        Console.WriteLine();
+        Console.WriteLine("=== Bulk vs Isochronous Comparison ===");
+        Console.WriteLine($"{"Transport",-22} {"Echoed",8} {"AvgLatMs",10} {"MinLatMs",10} {"MaxLatMs",10} {"KB/s",8}");
+        foreach (var result in results)
+        {
+            Console.WriteLine(
+                $"{result.Label,-22} " +
+                $"{result.RoundsEchoed}/{result.RoundsAttempted,-4} " +
+                $"{result.AvgLatencyMs,10:F2} " +
+                $"{result.MinLatencyMs,10:F2} " +
+                $"{result.MaxLatencyMs,10:F2} " +
+                $"{result.ThroughputKBps,8:F1}");
+        }
+    }
+
+    /// <summary>
+    /// Round-trip latency/throughput measurement for the bulk audio loopback path (EP 0x02/0x82),
+    /// one blocking WinUsb_WritePipe + WinUsb_ReadPipe pair per round.
+    /// </summary>
+    private static TransportComparisonResult RunBulkLoopbackLatencyDemo(IntPtr winUsbHandle, ushort cmdMaxPacket,
+                                                                        ushort audioMaxPacket, int rounds)
+    {
+        var startResp = ExecuteCommand(winUsbHandle, cmdMaxPacket, 920, 0x05,
+            BuildStartStreamPayload(LoopbackSampleRateHz, LoopbackChannelCount, LoopbackContainerBitsPerSample, AudioSourceHostRxLoopback));
+        ValidateResponseStatus(startResp, 0, "StartStream (bulk compare)");
+
+        var latenciesMs = new List<double>(rounds);
+        long totalBytes = 0;
+        var stopwatch = new Stopwatch();
+
+        for (int round = 0; round < rounds; round++)
+        {
+            var payload = BuildLoopbackPayload(frameCount: 4, seed: round * 17, channelCount: LoopbackChannelCount);
+            var flags = (round == 0) ? AudioFlagStartOfStream : (ushort)0;
+            var audioPacket = BuildAudioPacket((uint)round,
+                                               (uint)round * 160U,
+                                               LoopbackSampleRateHz,
+                                               LoopbackChannelCount,
+                                               LoopbackContainerBitsPerSample,
+                                               flags,
+                                               payload);
+
+            stopwatch.Restart();
+            var echoedPacket = ExchangeAudioPacket(winUsbHandle, audioMaxPacket, audioPacket);
+            stopwatch.Stop();
+
+            latenciesMs.Add(stopwatch.Elapsed.TotalMilliseconds);
+            totalBytes += echoedPacket.Length;
+        }
+
+        var stopResp = ExecuteCommand(winUsbHandle, cmdMaxPacket, 921, 0x06, Array.Empty<byte>());
+        ValidateResponseStatus(stopResp, 0, "StopStream (bulk compare)");
+        DrainProtocolEvents(winUsbHandle, cmdMaxPacket, DrainEventAttemptsAfterStop, "Bulk compare post-stop");
+
+        return BuildComparisonResult("Bulk (0x02/0x82)", rounds, latenciesMs, totalBytes);
+    }
+
+    /// <summary>
+    /// Round-trip latency/throughput measurement for the isochronous audio loopback path (EP 0x03/0x83).
+    /// Each round submits one 16-packet OUT transfer and one 16-packet IN transfer concurrently and waits
+    /// for both; latency therefore reflects a full ~16 ms transfer batch, not a single iso packet.
+    /// </summary>
+    private static TransportComparisonResult RunIsoLoopbackLatencyDemo(IntPtr winUsbHandle,
+                                                                       Dictionary<byte, WinUsbPipeInformation> endpoints,
+                                                                       ushort cmdMaxPacket, int rounds)
+    {
+        var startResp = ExecuteCommand(winUsbHandle, cmdMaxPacket, 930, 0x05,
+            BuildStartStreamPayload(LoopbackSampleRateHz, LoopbackChannelCount, LoopbackContainerBitsPerSample, AudioSourceHostRxLoopback));
+        ValidateResponseStatus(startResp, 0, "StartStream (iso compare)");
+
+        var outMaxPacket = endpoints[IsoAudioOutPipe].MaximumPacketSize;
+        var inMaxPacket = endpoints[IsoAudioInPipe].MaximumPacketSize;
+        var outBytesPerTransfer = (uint)IsoPacketsPerTransfer * outMaxPacket;
+        var inBytesPerTransfer = (uint)IsoPacketsPerTransfer * inMaxPacket;
+
+        var outBuffer = new byte[outBytesPerTransfer];
+        var inBuffer = new byte[inBytesPerTransfer];
+        var outGcHandle = GCHandle.Alloc(outBuffer, GCHandleType.Pinned);
+        var inGcHandle = GCHandle.Alloc(inBuffer, GCHandleType.Pinned);
+        IntPtr outBufPtr = outGcHandle.AddrOfPinnedObject();
+        IntPtr inBufPtr = inGcHandle.AddrOfPinnedObject();
+
+        IntPtr outIsochHandle = IntPtr.Zero;
+        IntPtr inIsochHandle = IntPtr.Zero;
+        IntPtr inDescsMem = Marshal.AllocHGlobal(IsoPacketsPerTransfer * IsoPacketDescriptorSize);
+        IntPtr outOverlappedMem = Marshal.AllocHGlobal(NativeOverlappedSize);
+        IntPtr inOverlappedMem = Marshal.AllocHGlobal(NativeOverlappedSize);
+        IntPtr outEventHandle = CreateEvent(IntPtr.Zero, true, false, IntPtr.Zero);
+        IntPtr inEventHandle = CreateEvent(IntPtr.Zero, true, false, IntPtr.Zero);
+
+        var latenciesMs = new List<double>(rounds);
+        long totalBytes = 0;
+        var stopwatch = new Stopwatch();
+        var bytesPerFrame = LoopbackChannelCount * (LoopbackContainerBitsPerSample / 8);
+        var loopbackFrameCount = (outMaxPacket - AudioHeaderSize) / bytesPerFrame;
+        uint sequenceNumber = 0u;
+
+        try
+        {
+            if (!WinUsb_RegisterIsochBuffer(winUsbHandle, IsoAudioOutPipe, outBufPtr, outBytesPerTransfer, out outIsochHandle))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "WinUsb_RegisterIsochBuffer (OUT) failed");
+
+            if (!WinUsb_RegisterIsochBuffer(winUsbHandle, IsoAudioInPipe, inBufPtr, inBytesPerTransfer, out inIsochHandle))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "WinUsb_RegisterIsochBuffer (IN) failed");
+
+            for (int round = 0; round < rounds; round++)
+            {
+                // Fill every packet slot in the OUT transfer with real audio (not just slot 0) so
+                // throughput reflects the iso path's actual per-interval payload capacity.
+                for (int packetIndex = 0; packetIndex < IsoPacketsPerTransfer; packetIndex++)
+                {
+                    var payload = BuildLoopbackPayload(frameCount: loopbackFrameCount, seed: (int)sequenceNumber * 17, channelCount: LoopbackChannelCount);
+                    var flags = (sequenceNumber == 0) ? AudioFlagStartOfStream : (ushort)0;
+                    var audioPacket = BuildAudioPacket(sequenceNumber,
+                                                       sequenceNumber * 160U,
+                                                       LoopbackSampleRateHz,
+                                                       LoopbackChannelCount,
+                                                       LoopbackContainerBitsPerSample,
+                                                       flags,
+                                                       payload);
+                    audioPacket.CopyTo(outBuffer, packetIndex * outMaxPacket);
+                    sequenceNumber++;
+                }
+
+                stopwatch.Restart();
+
+                for (int b = 0; b < NativeOverlappedSize; b++)
+                    Marshal.WriteByte(outOverlappedMem, b, 0);
+                Marshal.WriteIntPtr(outOverlappedMem, 24, outEventHandle);
+                ResetEvent(outEventHandle);
+
+                bool writeSubmitted = WinUsb_WriteIsochPipeAsap(outIsochHandle, 0u, outBytesPerTransfer, round > 0, outOverlappedMem);
+                int writeErr = Marshal.GetLastWin32Error();
+                if (!writeSubmitted && writeErr != ErrorIoPending)
+                    throw new Win32Exception(writeErr, $"WinUsb_WriteIsochPipeAsap failed (round {round})");
+
+                for (int b = 0; b < NativeOverlappedSize; b++)
+                    Marshal.WriteByte(inOverlappedMem, b, 0);
+                Marshal.WriteIntPtr(inOverlappedMem, 24, inEventHandle);
+                for (int b = 0; b < IsoPacketsPerTransfer * IsoPacketDescriptorSize; b++)
+                    Marshal.WriteByte(inDescsMem, b, 0);
+                ResetEvent(inEventHandle);
+
+                bool readSubmitted = WinUsb_ReadIsochPipeAsap(inIsochHandle, 0u, inBytesPerTransfer, round > 0,
+                    (uint)IsoPacketsPerTransfer, inDescsMem, inOverlappedMem);
+                int readErr = Marshal.GetLastWin32Error();
+                if (!readSubmitted && readErr != ErrorIoPending)
+                    throw new Win32Exception(readErr, $"WinUsb_ReadIsochPipeAsap failed (round {round})");
+
+                if (WaitForSingleObject(outEventHandle, TransferTimeoutMs) != WaitObject0)
+                    throw new TimeoutException($"Iso OUT transfer timed out on round {round}");
+                if (WaitForSingleObject(inEventHandle, TransferTimeoutMs) != WaitObject0)
+                    throw new TimeoutException($"Iso IN transfer timed out on round {round}");
+
+                stopwatch.Stop();
+
+                uint roundBytes = 0u;
+                bool roundHasAudio = false;
+                for (int p = 0; p < IsoPacketsPerTransfer; p++)
+                {
+                    IntPtr desc = IntPtr.Add(inDescsMem, p * IsoPacketDescriptorSize);
+                    uint pktLen = (uint)Marshal.ReadInt32(desc, 4);
+                    int pktStatus = Marshal.ReadInt32(desc, 8);
+                    if (pktStatus == 0 && pktLen >= AudioHeaderSize)
+                    {
+                        roundHasAudio = true;
+                        roundBytes += pktLen;
+                    }
+                }
+
+                if (roundHasAudio)
+                {
+                    latenciesMs.Add(stopwatch.Elapsed.TotalMilliseconds);
+                    totalBytes += roundBytes;
+                }
+            }
+        }
+        finally
+        {
+            if (outIsochHandle != IntPtr.Zero)
+                WinUsb_UnregisterIsochBuffer(outIsochHandle);
+            if (inIsochHandle != IntPtr.Zero)
+                WinUsb_UnregisterIsochBuffer(inIsochHandle);
+            Marshal.FreeHGlobal(inDescsMem);
+            Marshal.FreeHGlobal(outOverlappedMem);
+            Marshal.FreeHGlobal(inOverlappedMem);
+            CloseHandle(outEventHandle);
+            CloseHandle(inEventHandle);
+            outGcHandle.Free();
+            inGcHandle.Free();
+        }
+
+        var stopResp = ExecuteCommand(winUsbHandle, cmdMaxPacket, 931, 0x06, Array.Empty<byte>());
+        ValidateResponseStatus(stopResp, 0, "StopStream (iso compare)");
+        DrainProtocolEvents(winUsbHandle, cmdMaxPacket, DrainEventAttemptsAfterStop, "Iso compare post-stop");
+
+        return BuildComparisonResult("Iso (0x03/0x83)", rounds, latenciesMs, totalBytes);
+    }
+
+    private static void RunBulkVsIsoComparisonDemo(IntPtr winUsbHandle, Dictionary<byte, WinUsbPipeInformation> endpoints, ushort cmdMaxPacket)
+    {
+        var results = new List<TransportComparisonResult>();
+
+        if (endpoints.ContainsKey(AudioOutPipe) && endpoints.ContainsKey(AudioInPipe))
+        {
+            Console.WriteLine($"Running bulk loopback latency measurement ({CompareRoundCount} rounds)...");
+            var audioMaxPacket = endpoints[AudioInPipe].MaximumPacketSize;
+            results.Add(RunBulkLoopbackLatencyDemo(winUsbHandle, cmdMaxPacket, audioMaxPacket, CompareRoundCount));
+        }
+        else
+        {
+            Console.WriteLine("Skipping bulk comparison: audio pipes 0x02/0x82 not both present.");
+        }
+
+        if (endpoints.ContainsKey(IsoAudioOutPipe) && endpoints.ContainsKey(IsoAudioInPipe))
+        {
+            Console.WriteLine($"Running isochronous loopback latency measurement ({CompareRoundCount} rounds)...");
+            results.Add(RunIsoLoopbackLatencyDemo(winUsbHandle, endpoints, cmdMaxPacket, CompareRoundCount));
+        }
+        else
+        {
+            Console.WriteLine("Skipping iso comparison: iso pipes 0x03/0x83 not both present.");
+        }
+
+        PrintComparisonTable(results);
     }
 
     private static void RunGeneratedSmokeDemo(IntPtr winUsbHandle, Dictionary<byte, WinUsbPipeInformation> endpoints, ushort maxPacket)

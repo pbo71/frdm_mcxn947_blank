@@ -28,6 +28,27 @@ Isochronous audio endpoints (bulk-vs-iso comparison):
 - FS max packet size is `192` bytes (48 kHz 16-bit stereo, 1 ms); HS max packet size is `512` bytes,
   both at a 1 ms service interval.
 
+Measured Bulk vs Isochronous comparison (`tools/winusb-endpoint-probe --mode=bulk-vs-iso`, HS, 100
+rounds/transport, all 16 packet slots per iso transfer carrying real audio):
+
+| Transport | Echoed | Avg latency | Min latency | Max latency | Throughput |
+| --- | --- | --- | --- | --- | --- |
+| Bulk (`0x02`/`0x82`) | 100/100 | 0.13 ms | 0.09 ms | 0.89 ms | 428.6 KB/s |
+| Iso (`0x03`/`0x83`) | 100/100 | 15.92 ms | 15.39 ms | 20.61 ms | 495.0 KB/s |
+
+- Bulk has far lower round-trip latency: it completes as soon as the bus is free, one packet per
+  round trip.
+- Iso latency reflects a full `IsoPacketsPerTransfer = 16` batch (~16 ms at HS), not a single iso
+  packet — the host tool submits and waits for a 16-packet OUT+IN transfer per round, so this number
+  is a property of that batch size, not an intrinsic iso protocol floor.
+- Iso throughput is slightly higher than bulk once every packet slot in the batch carries real audio,
+  since isochronous transport reserves guaranteed bus time per microframe instead of competing for
+  best-effort bulk bandwidth.
+- Takeaway: bulk favors low latency and best-effort bandwidth; isochronous favors guaranteed bandwidth
+  and timing at the cost of per-batch latency. Results will vary with `IsoPacketsPerTransfer`, USB
+  speed, and host/bus load — re-run `--mode=bulk-vs-iso` to get current numbers rather than treating
+  this table as authoritative long-term.
+
 Audio stream header layout:
 
 ```text
