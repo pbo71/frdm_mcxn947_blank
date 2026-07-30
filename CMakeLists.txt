@@ -11,6 +11,10 @@ include(${SdkRootDirPath}/cmake/extension/mcux.cmake)
 
 project(audio_stream_demo_app LANGUAGES C CXX ASM PROJECT_BOARD_PORT_PATH ${board_root}/${board}/demo_apps/led_blinky)
 
+# C++ standard configuration
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 include("${board}_${core_id}/board_files.cmake")
 include(${SdkRootDirPath}/CMakeLists.txt)
@@ -74,6 +78,11 @@ target_include_directories(${MCUX_SDK_PROJECT_NAME} PRIVATE
     ${SdkRootDirPath}/components/codec/sgtl5000
     ${SdkRootDirPath}/components/codec/i2c
     ${SdkRootDirPath}/components/i2c
+)
+
+# Force C++20 standard (overrides SDK toolchain default)
+target_compile_options(${MCUX_SDK_PROJECT_NAME} PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-std=c++20>
 )
 
 mcux_convert_binary(BINARY ${APPLICATION_BINARY_DIR}/${MCUX_SDK_PROJECT_NAME}.bin)
