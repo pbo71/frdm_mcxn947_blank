@@ -1,15 +1,90 @@
 {
   "configurations": [
     {
+      "name": "(gdb) Launch",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "enter program name, for example ${workspaceFolder}/a.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${fileDirname}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/path/to/gdb",
+      "setupCommands": [
+          {
+              "description": "Enable pretty-printing for gdb",
+              "text": "-enable-pretty-printing",
+              "ignoreFailures": true
+          },
+          {
+              "description": "Set Disassembly Flavor to Intel",
+              "text": "-gdb-set disassembly-flavor intel",
+              "ignoreFailures": true
+          }
+      ]
+    },
+    {
+      "name": "(gdb) Launch",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "enter program name, for example ${workspaceFolder}/a.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${fileDirname}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/path/to/gdb",
+      "setupCommands": [
+          {
+              "description": "Enable pretty-printing for gdb",
+              "text": "-enable-pretty-printing",
+              "ignoreFailures": true
+          },
+          {
+              "description": "Set Disassembly Flavor to Intel",
+              "text": "-gdb-set disassembly-flavor intel",
+              "ignoreFailures": true
+          }
+      ]
+    },
+    {
+      "name": "(gdb) Launch",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "enter program name, for example ${workspaceFolder}/a.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${fileDirname}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/path/to/gdb",
+      "setupCommands": [
+          {
+              "description": "Enable pretty-printing for gdb",
+              "text": "-enable-pretty-printing",
+              "ignoreFailures": true
+          },
+          {
+              "description": "Set Disassembly Flavor to Intel",
+              "text": "-gdb-set disassembly-flavor intel",
+              "ignoreFailures": true
+          }
+      ]
+    },
+    {
       "type": "mcuxpresso-debug",
       "name": "Debug",
       "request": "launch",
       "cwd": "${workspaceFolder}",
       "executable": {
-        "elf": ""
+        "elf": "${workspaceFolder}/debug/audio_stream_demo_app_cm33_core0.elf"
       },
       "stopAtSymbol": "main",
-      "probeSerialNumber": "",
+      "probeSerialNumber": "0EOWLI4OZTTK3",
       "isAttach": false,
       "skipBuildBeforeDebug": false,
       "gdbInitCommands": [
@@ -18,7 +93,9 @@
         "set non-stop off"
       ],
       "gdbServerConfigs": {
-        "linkserver": {},
+        "linkserver": {
+          "device": "MCXN947:FRDM-MCXN947"
+        },
         "segger": {},
         "pemicro": {}
       },
